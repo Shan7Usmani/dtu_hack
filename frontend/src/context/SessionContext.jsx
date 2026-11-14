@@ -24,6 +24,7 @@ import {
 } from '../lib/detection';
 import { createVisionEngine } from '../lib/vision';
 import { loadJson, saveJson } from '../lib/storage';
+import { resumeGesture, setAlarm, stopAlarm } from '../lib/alarm';
 
 export const ACTIVE_STATUSES = ['VERIFYING', 'CRITICAL_ACCIDENT', 'CONFIRMED', 'HELP_REQUESTED'];
 
@@ -49,6 +50,37 @@ const SEED_CONTACTS = [
 ];
 
 const DISPATCH_CHANNELS = ['Fleet dispatch gateway', 'Police control room', 'Ambulance dispatch'];
+
+/**
+ * Telemetry is never null. Before a session exists the app renders this shape,
+ * so every page keeps its panels and can show an honest empty state instead of
+ * a skeleton that never resolves.
+ */
+export const IDLE_TELEMETRY = {
+  status: 'NO_DRIVER',
+  face_status: 'NO_DRIVER',
+  face_count: 0,
+  left_ear: 0,
+  right_ear: 0,
+  average_ear: 0,
+  is_eyes_closed: false,
+  closed_duration: 0,
+  drowsiness_events: 0,
+  longest_closure: 0,
+  session_avg_ear: 0,
+  phone_detected: false,
+  phone_status: 'NOT_DETECTED',
+  risk_level: 'LOW',
+  risk_score: 0,
+  fps: 0,
+  is_monitoring: false,
+  demo_mode: false,
+  monitoring_duration: 0,
+  monitoring_duration_formatted: '00:00:00',
+  has_session: false,
+};
+
+export const NO_SESSION_MESSAGE = 'No active session - start the camera to collect telemetry';
 
 function loadArray(key, fallback) {
   const value = loadJson(key, fallback);
@@ -88,7 +120,7 @@ function simulateEar(elapsedSeconds) {
 export function SessionProvider({ children }) {
   const { pushToast } = useToast();
 
-  const [demoMode, setDemoMode] = useState(() => Boolean(loadJson('demoMode', false)));
+  const [demoMode, setDemoMode] = useState(() => Boolean(loadJson('demoMode', true)));
   const [cameraState, setCameraState] = useState('idle'); // idle | requesting | running | error | unsupported
   const [cameraError, setCameraError] = useState(null);
   const [devices, setDevices] = useState([]);
@@ -96,8 +128,8 @@ export function SessionProvider({ children }) {
   const [resolution, setResolution] = useState(null);
   const [engineStatus, setEngineStatus] = useState({ state: 'idle', delegate: null, message: 'Models not loaded' });
   const [engineError, setEngineError] = useState(null);
-  const [telemetry, setTelemetry] = useState(null);
-  const [series, setSeries] = useState([]);
+  const [telemetry, setTelemetry] = useState(IDLE_TELEMETRY);
+  const [lastSession, setLastSession] = useState(null);
   const [alerts, setAlerts] = useState(() => loadArray('alerts', []));
   const [incidents, setIncidents] = useState(() => loadArray('incidents', []));
   const [contacts, setContacts] = useState(() => loadArray('contacts', SEED_CONTACTS));
@@ -106,6 +138,7 @@ export function SessionProvider({ children }) {
   const [inferenceFps, setInferenceFps] = useState(0);
   const [lastInferenceMs, setLastInferenceMs] = useState(null);
   const [lastUpdate, setLastUpdate] = useState(null);
+  const [series, setSeries] = useState([]);
   const [location, setLocation] = useState(null);
   const [locationError, setLocationError] = useState(null);
   const [localBackend, setLocalBackend] = useState('unknown');
@@ -165,6 +198,23 @@ export function SessionProvider({ children }) {
     if (!mountedRef.current) return;
     setTelemetry(base);
     setLastUpdate(Date.now());
+  }, []);
+
+  /**
+   * Mirror of server.py:261 — the alarm fires when the driver is drowsy, the
+   * risk level is CRITICAL, or a phone is detected. It is continuous: it keeps
+   * sounding until the condition clears, so a driver who is falling asleep
+   * cannot miss a one-off beep.
+   *
+   * The empty telemetry heartbeat (publishTelemetry({})) intentionally does
+   * not re-evaluate here, so the alarm state only changes on real data.
+   */
+  const evaluateAlarm = useCallback((patch) => {
+    const shouldAlarm =
+      patch.status === 'DROWSY' ||
+      patch.risk_level === 'CRITICAL' ||
+      Boolean(patch.phone_detected);
+    setAlarm(shouldAlarm);
   }, []);
 
   const sampleSeries = useCallback((patch) => {
@@ -311,6 +361,7 @@ export function SessionProvider({ children }) {
       if (now - lastPublishRef.current >= TELEMETRY_PUBLISH_MS) {
         lastPublishRef.current = now;
         publishTelemetry(patch);
+        evaluateAlarm(patch);
         sampleSeries(patch);
         setFramesProcessed(framesRef.current);
         setInferenceFps(fps);
@@ -318,7 +369,7 @@ export function SessionProvider({ children }) {
       }
     };
     rafRef.current = requestAnimationFrame(tick);
-  }, [handleFrame, publishTelemetry, sampleSeries, stopLoop]);
+  }, [handleFrame, publishTelemetry, sampleSeries, stopLoop, evaluateAlarm]);
 
   const listDevices = useCallback(async () => {
     if (!navigator.mediaDevices?.enumerateDevices) return;
@@ -360,6 +411,9 @@ export function SessionProvider({ children }) {
   const startCamera = useCallback(
     async (requestedDeviceId) => {
       if (demoRef.current) return true;
+      // Unlock audio on the first real user gesture; browsers block sound
+      // until the page has been clicked or keyed.
+      resumeGesture();
       setCameraError(null);
 
       if (!navigator.mediaDevices?.getUserMedia) {
@@ -438,11 +492,12 @@ export function SessionProvider({ children }) {
     lastStatusRef.current = 'AWAKE';
     phoneWasRef.current = false;
     setSeries([]);
-    setTelemetry(null);
-    telemetryRef.current = null;
+    setTelemetry({ ...IDLE_TELEMETRY });
+    telemetryRef.current = { ...IDLE_TELEMETRY };
     framesRef.current = 0;
     setFramesProcessed(0);
     setInferenceFps(0);
+    stopAlarm();
     return true;
   }, []);
 
@@ -453,6 +508,8 @@ export function SessionProvider({ children }) {
       demoRef.current = value;
       saveJson('demoMode', value);
       resetSession();
+      // Unlock audio on the toggle gesture so demo-mode alarms can play.
+      resumeGesture();
       if (value) {
         stopLoop();
         if (streamRef.current) {
@@ -540,12 +597,13 @@ export function SessionProvider({ children }) {
         fps: null,
         is_monitoring: true,
         demo_mode: true,
-      };
+};
       publishTelemetry(patch, { is_monitoring: true, demo_mode: true });
+      evaluateAlarm(patch);
       sampleSeries(patch);
     }, 150);
     return () => clearInterval(timer);
-  }, [demoMode, publishTelemetry, pushAlert, sampleSeries]);
+  }, [demoMode, publishTelemetry, pushAlert, sampleSeries, evaluateAlarm]);
 
   /* Keep the session clock moving even when frames stop arriving. */
   useEffect(() => {
@@ -614,6 +672,7 @@ export function SessionProvider({ children }) {
       if (streamRef.current) streamRef.current.getTracks().forEach((track) => track.stop());
       engineRef.current?.close?.();
       engineRef.current = null;
+      stopAlarm();
     };
   }, [listDevices, stopLoop]);
 

@@ -1,19 +1,11 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" class="dark">
   <head>
     <meta charset="UTF-8" />
     <script>
       (function () {
-        try {
-          var stored = window.localStorage.getItem('netrakshak.theme') || 'system';
-          var dark =
-            stored === 'dark' ||
-            (stored === 'system' && window.matchMedia('(prefers-color-scheme: dark)').matches);
-          document.documentElement.classList.toggle('dark', dark);
-          document.documentElement.style.colorScheme = dark ? 'dark' : 'light';
-        } catch (error) {
-          /* storage blocked - light default */
-        }
+        document.documentElement.classList.add('dark');
+        document.documentElement.style.colorScheme = 'dark';
       })();
     </script>
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
@@ -23,7 +15,21 @@
       name="description"
       content="Netrakshak is an affordable AI driver monitoring system that detects drowsiness, distraction and phone use from a single webcam in real time."
     />
-    <meta name="theme-color" content="#FFFFFF" />
+    <meta name="theme-color" content="#030507" />
+    <style>
+      html,
+      body {
+        margin: 0;
+        min-height: 100vh;
+        background: #030507;
+        color: #e5e7eb;
+        font-family: Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+        -webkit-text-size-adjust: 100%;
+      }
+      #root {
+        min-height: 100vh;
+      }
+    </style>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
@@ -31,8 +37,8 @@
       rel="stylesheet"
     />
   </head>
-  <body>
-    <div id="root"></div>
+  <body class="min-h-screen antialiased">
+    <div id="root" class="min-h-screen"></div>
     <script type="module" src="/src/main.jsx"></script>
   </body>
 </html>

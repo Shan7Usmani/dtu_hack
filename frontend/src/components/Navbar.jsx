@@ -7,14 +7,11 @@ import {
   Eye,
   LayoutGrid,
   Menu,
-  Monitor,
   Moon,
   ShieldAlert,
-  Sun,
 } from 'lucide-react';
 
 import { useSystem } from '../context/SessionContext';
-import { useTheme } from '../context/ThemeContext';
 import { cn } from '../lib/utils';
 import { StatusBadge } from './ui/badge';
 import { Button } from './ui/button';
@@ -52,42 +49,13 @@ function navClass({ isActive }) {
   );
 }
 
+/** The product is dark-only. Shown as a fixed label rather than a control. */
 function ThemeMenu() {
-  const { mode, setThemeMode } = useTheme();
-  const Icon = mode === 'dark' ? Moon : mode === 'light' ? Sun : Monitor;
-
   return (
-    <DropdownMenu>
-      <DropdownMenuTrigger asChild>
-        <Button variant="ghost" size="icon" aria-label={`Theme: ${mode}`}>
-          <Icon className="size-4" />
-        </Button>
-      </DropdownMenuTrigger>
-      <DropdownMenuContent align="end">
-        <DropdownMenuLabel>Theme</DropdownMenuLabel>
-        <DropdownMenuSeparator />
-        {[
-          { id: 'light', label: 'Light', icon: Sun },
-          { id: 'dark', label: 'Dark', icon: Moon },
-          { id: 'system', label: 'System', icon: Monitor },
-        ].map((item) => {
-          const ItemIcon = item.icon;
-          return (
-            <DropdownMenuItem
-              key={item.id}
-              onSelect={() => setThemeMode(item.id)}
-              className={cn('justify-between', mode === item.id && 'text-primary')}
-            >
-              <span className="flex items-center gap-2">
-                <ItemIcon className="size-4" />
-                {item.label}
-              </span>
-              {mode === item.id && <span className="text-[11px]">Active</span>}
-            </DropdownMenuItem>
-          );
-        })}
-      </DropdownMenuContent>
-    </DropdownMenu>
+    <span className="flex items-center gap-1.5 rounded-md border px-2.5 py-1.5 text-[11px] font-medium text-muted-foreground">
+      <Moon className="size-3.5" />
+      Dark
+    </span>
   );
 }
 
