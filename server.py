@@ -5,8 +5,14 @@ Production-Ready Flask Web, REST API & Emergency Response Server with Custom You
 
 import time
 import os
+import platform
 import uuid
 from typing import Dict, Any, List
+
+try:  # optional: host metrics fall back to null when psutil is unavailable
+    import psutil
+except ImportError:  # pragma: no cover
+    psutil = None
 import cv2
 import numpy as np
 from flask import Flask, Response, render_template, jsonify, request, send_from_directory
@@ -26,6 +32,14 @@ from utils.logger import logger
 import config
 
 app = Flask(__name__, static_folder="frontend/dist/assets", template_folder="frontend/dist")
+
+# Cross-origin support for split deploys (static frontend + remote API).
+# Comma-separated list in ALLOWED_ORIGINS; defaults to same-origin only.
+_origins = [o.strip() for o in os.environ.get("ALLOWED_ORIGINS", "").split(",") if o.strip()]
+if _origins:
+    from flask_cors import CORS
+
+    CORS(app, resources={r"/*": {"origins": _origins}})
 
 # Core AI Engine Instances (100% Preserved Logic + Connected Phone Detector)
 camera_manager = CameraManager()
@@ -48,6 +62,7 @@ monitoring_duration: float = 0.0
 fps_frame_count: int = 0
 fps_start_time: float = time.monotonic()
 current_fps: float = 0.0
+camera_error: Any = None
 
 # Alert Event Log Storage
 alerts_db: List[Dict[str, Any]] = [
@@ -58,29 +73,33 @@ alerts_db: List[Dict[str, Any]] = [
         "type": "System Check",
         "severity": "INFO",
         "message": "Netrakshak Edge AI Safety System initialized.",
-        "acknowledged": True,
-        "driver_id": "DRV-8842",
-        "vehicle_id": "VH-9021"
+        "acknowledged": True
     }
 ]
 
 # Emergency System Databases
+# The two seeded entries are placeholders shipped with the demo build so the
+# dispatch flow has somewhere to send notifications. They are flagged
+# is_sample=True and are never presented as real people. Contacts created
+# through POST /api/emergency/contacts persist for the life of the process.
 emergency_contacts_db: List[Dict[str, Any]] = [
     {
         "id": "CNT-001",
-        "name": "Ananya Sharma",
-        "relationship": "Spouse / Primary Contact",
-        "phone": "+91 98765 43210",
+        "name": "Sample contact - primary",
+        "relationship": "Placeholder (replace with a real contact)",
+        "phone": "+91 90000 00001",
         "priority": 1,
-        "active": True
+        "active": True,
+        "is_sample": True
     },
     {
         "id": "CNT-002",
-        "name": "Fleet Dispatch Command Center",
-        "relationship": "Fleet Manager",
-        "phone": "+91 11 2400 9000",
+        "name": "Sample contact - fleet desk",
+        "relationship": "Placeholder (replace with a real contact)",
+        "phone": "+91 90000 00002",
         "priority": 2,
-        "active": True
+        "active": True,
+        "is_sample": True
     }
 ]
 
@@ -111,6 +130,16 @@ latest_telemetry: Dict[str, Any] = {
 ensure_alarm_sound()
 
 
+def camera_error_payload():
+    """Human-readable camera problem for the UI, or None when healthy."""
+    if camera_manager.is_opened() or demo_mode:
+        return None
+    return camera_error or (
+        f"No webcam available at device index {config.CAMERA_INDEX}. "
+        "Connect a camera or switch the dashboard to browser webcam mode."
+    )
+
+
 def calculate_numeric_risk_score(status: str, closed_dur: float, events: int, phone_detected: bool = False) -> int:
     if status == "NO_DRIVER":
         return 0
@@ -129,7 +158,7 @@ def calculate_numeric_risk_score(status: str, closed_dur: float, events: int, ph
 
 
 def generate_mjpeg_frames():
-    global is_monitoring, demo_mode, fps_frame_count, fps_start_time, current_fps, latest_telemetry, monitoring_duration
+    global is_monitoring, demo_mode, fps_frame_count, fps_start_time, current_fps, latest_telemetry, monitoring_duration, camera_error
 
     while True:
         if demo_mode:
@@ -158,21 +187,29 @@ def generate_mjpeg_frames():
             continue
 
         if not camera_manager.is_opened():
-            camera_manager.start()
+            cam_ok, cam_msg = camera_manager.start()
+            camera_error = None if cam_ok else str(cam_msg)
 
         ret, frame = camera_manager.read_frame()
         if not ret or frame is None:
+            if not camera_error:
+                camera_error = (
+                    f"Webcam unavailable at device index {config.CAMERA_INDEX}. "
+                    "Connect a camera, or use the browser webcam mode in the UI."
+                )
             blank = np.zeros((config.FRAME_HEIGHT, config.FRAME_WIDTH, 3), dtype=np.uint8)
             blank[:] = (15, 23, 42)
-            cv2.putText(blank, "CONNECTING TO WEBCAM...", (150, 230), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (245, 158, 11), 2)
-            cv2.putText(blank, "Initializing camera stream", (210, 270), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (148, 163, 184), 1)
+            cv2.putText(blank, "WEBCAM UNAVAILABLE", (150, 225), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (245, 158, 11), 2)
+            cv2.putText(blank, "No readable camera device detected", (170, 262), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (148, 163, 184), 1)
+            cv2.putText(blank, "Use browser webcam mode or reconnect device", (130, 300), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (100, 116, 139), 1)
 
             ret, buffer = cv2.imencode('.jpg', blank)
             yield (b'--frame\r\n'
                    b'Content-Type: image/jpeg\r\n\r\n' + buffer.tobytes() + b'\r\n')
-            time.sleep(0.2)
-            camera_manager.start()
+            time.sleep(0.5)
             continue
+
+        camera_error = None
 
         h, w, _ = frame.shape
 
@@ -233,9 +270,7 @@ def generate_mjpeg_frames():
                         "type": "Phone Distraction",
                         "severity": "WARNING",
                         "message": "Mobile phone usage detected while driving! Keep hands on wheel.",
-                        "acknowledged": False,
-                        "driver_id": "DRV-8842",
-                        "vehicle_id": "VH-9021"
+                        "acknowledged": False
                     })
             elif drowsy_telemetry["status"] == "DROWSY" or risk_level == "CRITICAL":
                 if not alerts_db or alerts_db[0]["type"] != "Drowsiness Warning" or not alerts_db[0]["timestamp"].startswith(time.strftime("%H:%M")):
@@ -246,9 +281,7 @@ def generate_mjpeg_frames():
                         "type": "Drowsiness Warning",
                         "severity": "CRITICAL" if risk_score >= 70 else "WARNING",
                         "message": f"Drowsiness detected! Eyes closed for {drowsy_telemetry['closed_duration']:.1f}s.",
-                        "acknowledged": False,
-                        "driver_id": "DRV-8842",
-                        "vehicle_id": "VH-9021"
+                        "acknowledged": False
                     })
         else:
             alarm_manager.stop_alarm()
@@ -336,20 +369,67 @@ def telemetry():
     return jsonify(latest_telemetry)
 
 
+@app.route("/api/health")
+def api_health():
+    return jsonify({
+        "status": "ok",
+        "app": config.APP_NAME,
+        "app_version": config.APP_VERSION,
+        "backend_version": "1.1.0",
+        "system_status": "ONLINE",
+        "camera_connected": camera_manager.is_opened(),
+        "camera_error": camera_error_payload(),
+        "ai_model_loaded": True,
+        "is_monitoring": is_monitoring,
+        "demo_mode": demo_mode,
+        "fps": round(current_fps, 1),
+        "server_time": time.time()
+    })
+
+
+@app.route("/api/camera")
+def api_camera():
+    connected = camera_manager.is_opened()
+    return jsonify({
+        "connected": connected,
+        "camera_index": config.CAMERA_INDEX,
+        "demo_mode": demo_mode,
+        "is_monitoring": is_monitoring,
+        "error": None if connected or demo_mode else (
+            camera_error or "No webcam available. Use browser webcam mode or connect a camera."
+        )
+    })
+
+
 @app.route("/api/status")
 def api_status():
+    """Real host/process metrics only. No invented device names or latencies."""
+    cpu_percent = None
+    memory_mb = None
+    if psutil is not None:
+        try:
+            cpu_percent = psutil.cpu_percent(interval=None)
+            memory_mb = round(psutil.Process(os.getpid()).memory_info().rss / (1024 * 1024), 1)
+        except Exception as exc:  # psutil can be restricted on some hosts
+            logger.warning(f"psutil metrics unavailable: {exc}")
+    else:
+        logger.warning("psutil is not installed; host metrics are reported as null.")
+
     return jsonify({
         "system_status": "ONLINE",
         "camera_connected": camera_manager.is_opened(),
-        "ai_model_loaded": True,
-        "model_name": "MediaPipe 468 FaceMesh & Hands Phone Detector",
-        "backend_version": "1.1.0",
+        "camera_error": camera_error_payload(),
+        "ai_model_loaded": bool(getattr(face_detector, "face_mesh", None)),
+        "model_name": "MediaPipe FaceMesh (468 landmarks) + MediaPipe Hands",
+        "backend_version": "1.2.0",
         "fps": round(current_fps, 1),
-        "latency_ms": 14,
-        "cpu_usage_percent": 14,
-        "memory_usage_mb": 224,
-        "edge_device": "Intel Core i7 / Edge AI Accelerator",
+        "cpu_usage_percent": cpu_percent,
+        "memory_usage_mb": memory_mb,
+        "platform": f"{platform.system()} {platform.release()} ({platform.machine()})",
+        "hostname": platform.node(),
+        "monitoring": is_monitoring,
         "sensor_bus": "NOT CONNECTED",
+        "gps": "NOT CONNECTED",
         "emergency_system": "ACTIVE_STANDBY" if not active_incident else active_incident["status"],
         "demo_mode": demo_mode
     })
@@ -367,7 +447,10 @@ def api_risk():
 
 @app.route("/api/detections")
 def api_detections():
+    """Detector states backed by the live pipeline. Uninstrumented sensors are
+    reported as disconnected rather than filled with plausible-looking values."""
     phone_det = latest_telemetry.get("phone_detected", False)
+    face_count = latest_telemetry.get("face_count")
     return jsonify({
         "eyes": {
             "name": "Eye Aspect Ratio (EAR)",
@@ -375,36 +458,35 @@ def api_detections():
             "value": f"EAR {latest_telemetry.get('average_ear', 0.0):.3f}",
             "connected": True
         },
-        "attention": {
-            "name": "Head Pose & Attention",
-            "status": "FOCUSED" if latest_telemetry.get("status") != "NO_DRIVER" else "NO DRIVER",
-            "value": "Forward Road Focus",
+        "face": {
+            "name": "Face & head presence",
+            "status": latest_telemetry.get("status", "NO_DRIVER"),
+            "value": f"{face_count} face(s) in frame" if face_count is not None else "Awaiting frames",
             "connected": True
         },
         "phone": {
-            "name": "Phone Usage Detection",
+            "name": "Phone usage detection",
             "status": "PHONE DETECTED" if phone_det else "NO PHONE DETECTED",
-            "value": "Mobile Usage Warning (Alarm)" if phone_det else "No Mobile Device Detected",
+            "value": "Handheld device detected - alarm active" if phone_det else "No handheld device detected",
             "connected": True
         },
         "fatigue": {
-            "name": "Drowsiness State Machine",
+            "name": "Drowsiness state machine",
             "status": latest_telemetry.get("status", "AWAKE"),
             "value": f"Closure {latest_telemetry.get('closed_duration', 0.0):.1f}s",
             "connected": True
         },
         "alcohol": {
-            "name": "Alcohol Impairment Sensor",
+            "name": "Alcohol impairment sensor",
             "status": "NOT CONNECTED",
-            "value": "Hardware Sensor Offline",
-            "connected": False,
-            "note": "V7 Hardware Fusion"
+            "value": "No breath sensor hardware attached",
+            "connected": False
         },
-        "speed": {
-            "name": "Overspeeding Monitor",
-            "status": "SAFE",
-            "value": "65 km/h (Limit 80)",
-            "connected": True
+        "vehicle": {
+            "name": "Vehicle telemetry (speed, GPS)",
+            "status": "NOT CONNECTED",
+            "value": "No vehicle bus or GPS receiver attached",
+            "connected": False
         }
     })
 
@@ -425,38 +507,39 @@ def api_ack_alert(alert_id):
 
 @app.route("/api/analytics")
 def api_analytics():
+    """Aggregates the current session only. This server keeps no trip history,
+    so no cross-day trend or 'safe driving %' is reported."""
+    unacknowledged = len([a for a in alerts_db if not a.get("acknowledged")])
     return jsonify({
-        "total_drive_time": format_duration(monitoring_duration + 14400),
-        "safe_driving_percent": 96.4,
-        "drowsiness_events": latest_telemetry.get("drowsiness_events", 0) + 2,
-        "distraction_events": 2,
-        "overspeed_events": 0,
-        "critical_events": len([i for i in incidents_db if i.get("severity") == "CRITICAL"]) + 1,
-        "average_risk_score": 18,
-        "hourly_risk_trend": [
-            {"time": "08:00", "score": 12},
-            {"time": "09:00", "score": 15},
-            {"time": "10:00", "score": 14},
-            {"time": "11:00", "score": 28},
-            {"time": "12:00", "score": 45},
-            {"time": "13:00", "score": 18},
-            {"time": "14:00", "score": latest_telemetry.get("risk_score", 15)}
-        ]
+        "source": "live_session" if monitoring_duration > 0 else "no_session",
+        "session_duration_seconds": round(monitoring_duration, 1),
+        "session_duration": format_duration(monitoring_duration),
+        "drowsiness_events": latest_telemetry.get("drowsiness_events", 0),
+        "longest_closure_seconds": round(latest_telemetry.get("longest_closure", 0.0), 2),
+        "closed_duration_seconds": round(latest_telemetry.get("closed_duration", 0.0), 2),
+        "session_average_ear": round(latest_telemetry.get("session_avg_ear", 0.0), 3),
+        "current_risk_score": latest_telemetry.get("risk_score", 0),
+        "current_status": latest_telemetry.get("status", "AWAKE"),
+        "phone_detected_now": bool(latest_telemetry.get("phone_detected", False)),
+        "alerts_total": len(alerts_db),
+        "alerts_unacknowledged": unacknowledged,
+        "incidents_total": len(incidents_db),
+        "incidents_critical": len([i for i in incidents_db if i.get("severity") == "CRITICAL"]),
+        "history_persisted": False,
+        "note": "Current session only. Trip history is not persisted by this build."
     })
 
 
 @app.route("/api/driver")
 def api_driver():
+    """This build has no driver roster or vehicle database. Rather than
+    inventing an identity, the endpoint reports that plainly."""
     return jsonify({
-        "driver_id": "DRV-8842",
-        "name": "Capt. Rajesh Sharma",
-        "vehicle_id": "VH-9021",
-        "vehicle_model": "Freightliner Cascadia ADAS-Ready",
-        "registration": "KA-01-MJ-4920",
-        "safety_score": 94,
-        "total_trips": 142,
-        "total_distance_km": 18450,
-        "status": "ACTIVE_SHIFT"
+        "status": "not_configured",
+        "driver": None,
+        "vehicle": None,
+        "note": "No driver or vehicle profile is configured. Netrakshak monitors the "
+                "person in front of the camera; it does not store roster data."
     })
 
 
@@ -489,12 +572,20 @@ def api_emergency_detect():
     global active_incident
 
     data = request.get_json(silent=True) or {}
-    g_force = float(data.get("g_force", 4.8))
-    speed_drop = float(data.get("speed_drop_kmh", 45.0))
-    rotation = float(data.get("rotation_deg_sec", 45.0))
-    driver_status = data.get("driver_status", latest_telemetry.get("status", "DROWSY"))
-    eye_closed_dur = float(data.get("eye_closed_duration", latest_telemetry.get("closed_duration", 2.5)))
-    cv_cue = bool(data.get("cv_collision_cue", True))
+    if "g_force" not in data or "speed_drop_kmh" not in data:
+        return jsonify({
+            "status": "error",
+            "message": "Sensor payload required. This build has no accelerometer or OBD bus, "
+                       "so g_force and speed_drop_kmh must be supplied by the caller "
+                       "(use /api/emergency/simulate for a labelled simulation)."
+        }), 400
+
+    g_force = float(data["g_force"])
+    speed_drop = float(data["speed_drop_kmh"])
+    rotation = float(data.get("rotation_deg_sec") or 0.0)
+    driver_status = data.get("driver_status", latest_telemetry.get("status", "AWAKE"))
+    eye_closed_dur = float(data.get("eye_closed_duration") or 0.0)
+    cv_cue = bool(data.get("cv_collision_cue", False))
 
     sensor_payload = {
         "g_force": g_force,
@@ -508,20 +599,39 @@ def api_emergency_detect():
     confidence_score, severity, driver_condition = accident_detector.calculate_accident_confidence(sensor_payload)
     inc_id = f"NTK-2026-{uuid.uuid4().hex[:6].upper()}"
 
-    location_obj = {
-        "latitude": float(data.get("latitude", 28.6139)),
-        "longitude": float(data.get("longitude", 77.2090)),
-        "address": data.get("address", "Rajiv Chowk, Connaught Place, New Delhi"),
-        "accuracy_m": 4.5,
-        "speed_kmh": 65.0,
-        "heading_deg": 185
-    }
+    # Location is only recorded when the caller supplies it. No GPS is attached.
+    location_obj = None
+    if data.get("latitude") is not None and data.get("longitude") is not None:
+        location_obj = {
+            "latitude": float(data["latitude"]),
+            "longitude": float(data["longitude"]),
+            "address": data.get("address"),
+            "source": data.get("location_source", "caller_supplied")
+        }
+
+    timeline = [
+        {"time": time.strftime("%H:%M:%S"), "title": "Impact reported",
+         "desc": f"G-force {g_force}g, speed drop {speed_drop} km/h, rotation {rotation} deg/s"},
+        {"time": time.strftime("%H:%M:%S"), "title": "Confidence assessed",
+         "desc": f"Confidence {confidence_score}% - severity {severity}"}
+    ]
+    if location_obj:
+        timeline.append({
+            "time": time.strftime("%H:%M:%S"),
+            "title": "Location attached",
+            "desc": f"{location_obj.get('address') or 'coords only'} "
+                    f"({location_obj['latitude']}, {location_obj['longitude']}) - {location_obj['source']}"
+        })
+    else:
+        timeline.append({
+            "time": time.strftime("%H:%M:%S"),
+            "title": "No location available",
+            "desc": "No GPS receiver or caller coordinates were supplied."
+        })
 
     active_incident = {
         "id": str(uuid.uuid4()),
         "incident_id": inc_id,
-        "vehicle_id": "VH-9021",
-        "driver_id": "DRV-8842",
         "timestamp": time.strftime("%H:%M:%S"),
         "date": time.strftime("%Y-%m-%d"),
         "created_at": time.time(),
@@ -530,15 +640,11 @@ def api_emergency_detect():
         "status": "CRITICAL_ACCIDENT" if confidence_score >= 90 else "VERIFYING",
         "driver_condition": driver_condition,
         "location": location_obj,
-        "speed_before": 65.0,
-        "speed_after": 0.0,
+        "speed_before": data.get("speed_kmh"),
+        "speed_after": data.get("speed_after_kmh"),
         "verification_seconds_remaining": 0 if confidence_score >= 90 else 15,
         "is_simulated": bool(data.get("is_simulated", False)),
-        "timeline": [
-            {"time": time.strftime("%H:%M:%S"), "title": "Impact Detected", "desc": f"Multi-sensor collision cue recorded (G-Force: {g_force}g)"},
-            {"time": time.strftime("%H:%M:%S"), "title": "Accident Confidence Assessed", "desc": f"Confidence Score {confidence_score}% - Severity: {severity}"},
-            {"time": time.strftime("%H:%M:%S"), "title": "GPS Location Acquired", "desc": f"{location_obj['address']} ({location_obj['latitude']}, {location_obj['longitude']})"}
-        ]
+        "timeline": timeline
     }
 
     if confidence_score >= 90:
@@ -634,9 +740,10 @@ def api_emergency_contacts():
             "id": f"CNT-{len(emergency_contacts_db) + 1:03d}",
             "name": data.get("name", "Emergency Contact"),
             "relationship": data.get("relationship", "Contact"),
-            "phone": data.get("phone", "+91 00000 00000"),
+            "phone": data.get("phone", ""),
             "priority": int(data.get("priority", 1)),
-            "active": True
+            "active": True,
+            "is_sample": False
         }
         emergency_contacts_db.append(new_cnt)
         return jsonify({"status": "ok", "contact": new_cnt})
@@ -646,6 +753,8 @@ def api_emergency_contacts():
 
 @app.route("/api/emergency/simulate", methods=["POST"])
 def api_emergency_simulate():
+    """Labelled simulation used by the UI demo. Coordinates are fixtures and are
+    marked as such on the incident payload."""
     sim_data = {
         "g_force": 5.4,
         "speed_drop_kmh": 62.0,
@@ -656,7 +765,8 @@ def api_emergency_simulate():
         "is_simulated": True,
         "latitude": 28.6139,
         "longitude": 77.2090,
-        "address": "Rajiv Chowk, Connaught Place, New Delhi (SIMULATED)"
+        "address": "Simulated location (fixture coordinates, no GPS hardware)",
+        "location_source": "simulated_fixture"
     }
     return api_emergency_detect_with_data(sim_data)
 
@@ -686,10 +796,8 @@ def api_emergency_detect_with_data(data: dict):
     location_obj = {
         "latitude": float(data.get("latitude", 28.6139)),
         "longitude": float(data.get("longitude", 77.2090)),
-        "address": data.get("address", "Rajiv Chowk, Connaught Place, New Delhi (SIMULATED)"),
-        "accuracy_m": 4.5,
-        "speed_kmh": 65.0,
-        "heading_deg": 185
+        "address": data.get("address", "Simulated location (fixture coordinates, no GPS hardware)"),
+        "source": data.get("location_source", "simulated_fixture")
     }
 
     notifs = notification_service.dispatch_emergency_notifications(
@@ -699,8 +807,6 @@ def api_emergency_detect_with_data(data: dict):
     active_incident = {
         "id": str(uuid.uuid4()),
         "incident_id": inc_id,
-        "vehicle_id": "VH-9021",
-        "driver_id": "DRV-8842",
         "timestamp": time.strftime("%H:%M:%S"),
         "date": time.strftime("%Y-%m-%d"),
         "created_at": time.time(),
@@ -709,21 +815,16 @@ def api_emergency_detect_with_data(data: dict):
         "status": "CONFIRMED",
         "driver_condition": driver_condition,
         "location": location_obj,
-        "speed_before": 65.0,
-        "speed_after": 0.0,
+        "speed_before": None,
+        "speed_after": None,
         "verification_seconds_remaining": 0,
         "is_simulated": True,
         "notifications": notifs,
-        "responders": [
-            {"type": "Ambulance", "name": "AIIMS Trauma Rescue Unit 4", "status": "EN_ROUTE", "eta": "6 min", "dist_km": 3.2},
-            {"type": "Police", "name": "Delhi Traffic Patrol 12", "status": "NOTIFIED", "eta": "8 min", "dist_km": 2.4},
-            {"type": "Fire", "name": "CP Fire Station Unit 2", "status": "STANDBY", "eta": "10 min", "dist_km": 4.1}
-        ],
         "timeline": [
-            {"time": time.strftime("%H:%M:%S"), "title": "Simulated Impact Detected", "desc": f"High-G deceleration recorded ({g_force}g)"},
-            {"time": time.strftime("%H:%M:%S"), "title": "Accident Confidence Assessed", "desc": f"Confidence Score {confidence_score}% - Severity: {severity}"},
-            {"time": time.strftime("%H:%M:%S"), "title": "GPS Location Locked", "desc": location_obj['address']},
-            {"time": time.strftime("%H:%M:%S"), "title": "Simulated Notifications Dispatched", "desc": f"Sent alerts to {len(notifs)} emergency channels"}
+            {"time": time.strftime("%H:%M:%S"), "title": "Simulated impact", "desc": f"Fixture deceleration {g_force}g, speed drop {speed_drop} km/h"},
+            {"time": time.strftime("%H:%M:%S"), "title": "Confidence assessed", "desc": f"Confidence {confidence_score}% - severity {severity}"},
+            {"time": time.strftime("%H:%M:%S"), "title": "Simulated location attached", "desc": location_obj['address']},
+            {"time": time.strftime("%H:%M:%S"), "title": "Simulated dispatch", "desc": f"{len(notifs)} notification records generated by the simulated gateway"}
         ]
     }
 
@@ -733,16 +834,25 @@ def api_emergency_detect_with_data(data: dict):
 
 @app.route("/api/emergency/test", methods=["POST"])
 def api_emergency_test():
+    """Genuine self-check. Each flag is read from the running process; nothing is
+    asserted to pass unless it was actually verified here."""
+    camera_ok = camera_manager.is_opened()
     results = {
-        "test_mode": True,
-        "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
-        "accident_detection_pipeline": "PASSED",
-        "gps_subsystem": "PASSED (Coordinates: 28.6139, 77.2090)",
-        "backend_incident_engine": "PASSED",
-        "notification_service_abstraction": "PASSED (Simulated Gateway)",
-        "database_storage": "PASSED",
-        "emergency_contacts": len(emergency_contacts_db),
-        "note": "TEST MODE COMPLETE -- NO REAL EMERGENCY SERVICES CONTACTED"
+        "checked_at": time.strftime("%Y-%m-%d %H:%M:%S"),
+        "camera": {
+            "ready": camera_ok,
+            "demo_mode": demo_mode,
+            "detail": f"device index {config.CAMERA_INDEX}" if camera_ok else camera_error_payload()
+        },
+        "face_mesh": {"ready": bool(getattr(face_detector, "face_mesh", None))},
+        "hand_tracking": {"ready": bool(getattr(phone_detector, "hands", None))},
+        "alarm_audio": {"ready": os.path.exists(config.ALARM_FILE), "path": str(config.ALARM_FILE)},
+        "incident_engine": {"ready": callable(getattr(accident_detector, "calculate_accident_confidence", None))},
+        "contacts_real": len([c for c in emergency_contacts_db if not c.get("is_sample")]),
+        "contacts_sample": len([c for c in emergency_contacts_db if c.get("is_sample")]),
+        "incidents_recorded": len(incidents_db),
+        "gps": "NOT CONNECTED",
+        "dispatch": "SIMULATED_GATEWAY - no SMS, telephony or webhook provider is configured",
     }
     return jsonify(results)
 
@@ -908,11 +1018,18 @@ def api_process_frame():
 
 @app.route("/api/start", methods=["POST"])
 def api_start():
-    global is_monitoring, session_start_time, fps_start_time, fps_frame_count
+    global is_monitoring, session_start_time, fps_start_time, fps_frame_count, camera_error
     if not is_monitoring:
         success, msg = camera_manager.start()
         if not success:
-            return jsonify({"status": "error", "message": msg}), 400
+            camera_error = str(msg)
+            return jsonify({
+                "status": "error",
+                "message": msg,
+                "camera_connected": False,
+                "hint": "Connect a webcam or switch the dashboard to browser webcam mode."
+            }), 400
+        camera_error = None
         is_monitoring = True
         session_start_time = time.monotonic()
         fps_start_time = time.monotonic()
@@ -963,9 +1080,15 @@ def serve_production_app(path):
 
 
 if __name__ == "__main__":
-    logger.info("Starting Netrakshak Production Web Server at http://127.0.0.1:5000 ...")
+    SERVER_HOST = os.environ.get("HOST", "127.0.0.1")
+    try:
+        SERVER_PORT = int(os.environ.get("PORT", "5000"))
+    except ValueError:
+        SERVER_PORT = 5000
+
+    logger.info(f"Starting Netrakshak Production Web Server at http://{SERVER_HOST}:{SERVER_PORT} ...")
     print("\n" + "="*60)
     print("NETRAKSHAK AI DRIVER SAFETY & EMERGENCY RESPONSE SYSTEM")
-    print("Web Server Running at: http://127.0.0.1:5000")
+    print(f"Web Server Running at: http://{SERVER_HOST}:{SERVER_PORT}")
     print("="*60 + "\n")
-    app.run(host="127.0.0.1", port=5000, debug=False, threaded=True)
+    app.run(host=SERVER_HOST, port=SERVER_PORT, debug=config.DEBUG_MODE, threaded=True)

@@ -1,125 +1,208 @@
-import React, { useState, useEffect } from 'react';
-import { Link, useLocation } from 'react-router-dom';
-import { Eye, ShieldAlert, Radio, ToggleLeft, ToggleRight } from 'lucide-react';
-import { toggleDemoMode, fetchActiveIncident } from '../services/api';
+import React, { useState } from 'react';
+import { Link, NavLink, useLocation } from 'react-router-dom';
+import {
+  Activity,
+  Bell,
+  ChevronDown,
+  Eye,
+  LayoutGrid,
+  Menu,
+  Monitor,
+  Moon,
+  ShieldAlert,
+  Sun,
+} from 'lucide-react';
 
-export default function Navbar({ isDemoMode, setIsDemoMode }) {
-  const location = useLocation();
-  const [activeInc, setActiveInc] = useState(null);
+import { useSystem } from '../context/SessionContext';
+import { useTheme } from '../context/ThemeContext';
+import { cn } from '../lib/utils';
+import { StatusBadge } from './ui/badge';
+import { Button } from './ui/button';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from './ui/dropdown-menu';
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from './ui/dialog';
 
-  useEffect(() => {
-    async function checkInc() {
-      const res = await fetchActiveIncident();
-      if (res && res.active_incident) {
-        setActiveInc(res.active_incident);
-      } else {
-        setActiveInc(null);
-      }
-    }
-    checkInc();
-    const interval = setInterval(checkInc, 3000);
-    return () => clearInterval(interval);
-  }, []);
+const PRIMARY = [
+  { to: '/', label: 'Overview', end: true },
+  { to: '/dashboard', label: 'Monitor' },
+  { to: '/alerts', label: 'Alerts' },
+  { to: '/analytics', label: 'Analytics' },
+  { to: '/emergency', label: 'Emergency' },
+];
 
-  const handleDemoToggle = async () => {
-    const nextState = !isDemoMode;
-    setIsDemoMode(nextState);
-    await toggleDemoMode(nextState);
-  };
+const SECONDARY = [
+  { to: '/emergency/contacts', label: 'Emergency contacts' },
+  { to: '/driver', label: 'Session' },
+  { to: '/system', label: 'System' },
+  { to: '/technology', label: 'Technology' },
+];
 
-  const navItems = [
-    { label: 'Home', path: '/' },
-    { label: 'Live Monitor', path: '/dashboard', badge: 'LIVE' },
-    { label: 'Emergency', path: '/emergency', emergencyBadge: activeInc ? '🔴' : '🟢' },
-    { label: 'Contacts', path: '/emergency/contacts' },
-    { label: 'Analytics', path: '/analytics' },
-    { label: 'Alerts', path: '/alerts' },
-    { label: 'System', path: '/system' },
-    { label: 'Technology', path: '/technology' },
-  ];
+const ALL_LINKS = [...PRIMARY, ...SECONDARY];
+
+function navClass({ isActive }) {
+  return cn(
+    'rounded-md px-2.5 py-1.5 text-[13px] font-medium transition-colors',
+    isActive ? 'bg-secondary text-foreground' : 'text-muted-foreground hover:bg-secondary/60 hover:text-foreground',
+  );
+}
+
+function ThemeMenu() {
+  const { mode, setThemeMode } = useTheme();
+  const Icon = mode === 'dark' ? Moon : mode === 'light' ? Sun : Monitor;
 
   return (
-    <header className="sticky top-0 z-40 bg-[#0F172A]/90 backdrop-blur-md border-b border-slate-800">
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
-        
-        {/* Brand Logo */}
-        <Link to="/" className="flex items-center gap-3 group">
-          <div className="w-10 h-10 rounded-xl bg-gradient-to-tr from-blue-600 to-emerald-500 p-0.5 shadow-lg shadow-blue-500/20 group-hover:scale-105 transition-transform">
-            <div className="w-full h-full bg-slate-950 rounded-[10px] flex items-center justify-center">
-              <Eye className="w-5 h-5 text-emerald-400" />
-            </div>
-          </div>
-          <div>
-            <div className="flex items-center gap-2">
-              <span className="font-extrabold text-lg tracking-tight text-white font-mono">NETRAKSHAK</span>
-              <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">AI V1.0</span>
-            </div>
-            <p className="text-[10px] text-slate-400 font-medium tracking-wider uppercase">Driver Safety & Rescue System</p>
-          </div>
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <Button variant="ghost" size="icon" aria-label={`Theme: ${mode}`}>
+          <Icon className="size-4" />
+        </Button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end">
+        <DropdownMenuLabel>Theme</DropdownMenuLabel>
+        <DropdownMenuSeparator />
+        {[
+          { id: 'light', label: 'Light', icon: Sun },
+          { id: 'dark', label: 'Dark', icon: Moon },
+          { id: 'system', label: 'System', icon: Monitor },
+        ].map((item) => {
+          const ItemIcon = item.icon;
+          return (
+            <DropdownMenuItem
+              key={item.id}
+              onSelect={() => setThemeMode(item.id)}
+              className={cn('justify-between', mode === item.id && 'text-primary')}
+            >
+              <span className="flex items-center gap-2">
+                <ItemIcon className="size-4" />
+                {item.label}
+              </span>
+              {mode === item.id && <span className="text-[11px]">Active</span>}
+            </DropdownMenuItem>
+          );
+        })}
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+}
+
+function LiveStatus() {
+  const { online, fps, demoMode, activeIncident, riskScore } = useSystem();
+
+  if (demoMode) {
+    return <StatusBadge tone="warning">Demo</StatusBadge>;
+  }
+  if (activeIncident) {
+    return <StatusBadge tone="danger">Incident open</StatusBadge>;
+  }
+  if (online === false) {
+    return <StatusBadge tone="danger">Camera error</StatusBadge>;
+  }
+  if (online === null) {
+    return <StatusBadge tone="neutral">Standby</StatusBadge>;
+  }
+  if (riskScore >= 70) {
+    return <StatusBadge tone="danger">High risk</StatusBadge>;
+  }
+  return (
+    <StatusBadge tone="success">
+      Live
+      <span className="font-mono text-[11px] font-normal tabular">{fps ? `${fps.toFixed(0)} fps` : ''}</span>
+    </StatusBadge>
+  );
+}
+
+function MobileMenu() {
+  const [open, setOpen] = useState(false);
+
+  return (
+    <Dialog open={open} onOpenChange={setOpen}>
+      <DialogTrigger asChild>
+        <Button variant="ghost" size="icon" className="md:hidden" aria-label="Open navigation">
+          <Menu className="size-4" />
+        </Button>
+      </DialogTrigger>
+      <DialogContent className="max-w-sm p-0">
+        <DialogHeader className="border-b px-4 py-4">
+          <DialogTitle>Navigate</DialogTitle>
+        </DialogHeader>
+        <nav className="flex flex-col gap-0.5 p-2">
+          {ALL_LINKS.map((item) => (
+            <NavLink
+              key={item.to}
+              to={item.to}
+              end={item.end}
+              onClick={() => setOpen(false)}
+              className={({ isActive }) =>
+                cn(
+                  'rounded-md px-3 py-2 text-sm font-medium transition-colors',
+                  isActive ? 'bg-secondary text-foreground' : 'text-muted-foreground hover:bg-secondary/60',
+                )
+              }
+            >
+              {item.label}
+            </NavLink>
+          ))}
+        </nav>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+export default function Navbar() {
+  const location = useLocation();
+  const moreActive = SECONDARY.some((item) => location.pathname.startsWith(item.to));
+
+  return (
+    <header className="sticky top-0 z-40 border-b bg-background/85 backdrop-blur supports-[backdrop-filter]:bg-background/70">
+      <div className="page-gutter flex h-14 items-center gap-2">
+        <Link to="/" className="mr-2 flex items-center gap-2 text-[15px] font-semibold tracking-tight">
+          <span className="flex size-6 items-center justify-center rounded-md border bg-secondary">
+            <Eye className="size-3.5 text-primary" />
+          </span>
+          Netrakshak
         </Link>
 
-        {/* Navigation Links */}
-        <nav className="hidden md:flex items-center gap-1">
-          {navItems.map((item) => {
-            const isActive = location.pathname === item.path;
-            return (
-              <Link
-                key={item.path}
-                to={item.path}
-                className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all relative flex items-center gap-1.5 ${
-                  isActive
-                    ? 'text-white bg-slate-800/80 border border-slate-700 shadow-sm'
-                    : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/40'
-                }`}
-              >
-                {item.label}
-                {item.emergencyBadge && (
-                  <span className="text-xs">{item.emergencyBadge}</span>
-                )}
-                {item.badge && (
-                  <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
-                )}
-              </Link>
-            );
-          })}
+        <nav className="hidden items-center gap-0.5 md:flex" aria-label="Primary">
+          {PRIMARY.map((item) => (
+            <NavLink key={item.to} to={item.to} end={item.end} className={navClass}>
+              {item.label}
+            </NavLink>
+          ))}
+          <DropdownMenu>
+            <DropdownMenuTrigger
+              className={cn(
+                'flex items-center gap-1 rounded-md px-2.5 py-1.5 text-[13px] font-medium transition-colors',
+                moreActive
+                  ? 'bg-secondary text-foreground'
+                  : 'text-muted-foreground hover:bg-secondary/60 hover:text-foreground',
+              )}
+            >
+              More
+              <ChevronDown className="size-3.5" />
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="start">
+              {SECONDARY.map((item) => (
+                <DropdownMenuItem key={item.to} asChild>
+                  <Link to={item.to}>{item.label}</Link>
+                </DropdownMenuItem>
+              ))}
+            </DropdownMenuContent>
+          </DropdownMenu>
         </nav>
 
-        {/* Action Controls & Demo Switch */}
-        <div className="flex items-center gap-3">
-          
-          {/* Demo Mode Switch */}
-          <button
-            onClick={handleDemoToggle}
-            className={`flex items-center gap-2 px-2.5 py-1 rounded-lg text-xs font-bold transition-all border ${
-              isDemoMode
-                ? 'bg-amber-500/10 text-amber-400 border-amber-500/30'
-                : 'bg-slate-800/60 text-slate-400 border-slate-700 hover:text-slate-200'
-            }`}
-            title="Toggle presentation demo data mode"
-          >
-            {isDemoMode ? (
-              <>
-                <ToggleRight className="w-4 h-4 text-amber-400" />
-                <span className="hidden sm:inline">DEMO MODE</span>
-              </>
-            ) : (
-              <>
-                <ToggleLeft className="w-4 h-4 text-slate-500" />
-                <span className="hidden sm:inline">LIVE CAMERA</span>
-              </>
-            )}
-          </button>
-
-          {/* Launch Dashboard CTA */}
-          <Link
-            to="/emergency"
-            className="px-3.5 py-1.5 rounded-lg text-xs font-bold bg-red-600 hover:bg-red-500 text-white shadow-lg shadow-red-600/25 transition-all flex items-center gap-1.5"
-          >
-            <ShieldAlert className="w-3.5 h-3.5 text-white" />
-            <span>Emergency Center</span>
-          </Link>
+        <div className="ml-auto flex items-center gap-1.5">
+          <div className="mr-1 hidden sm:block">
+            <LiveStatus />
+          </div>
+          <ThemeMenu />
+          <MobileMenu />
         </div>
-
       </div>
     </header>
   );

@@ -1,226 +1,241 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import { Link } from 'react-router-dom';
-import { Play, Square, RotateCcw, ShieldCheck, AlertTriangle, AlertOctagon, User, Truck, ShieldAlert, ArrowRight } from 'lucide-react';
-import RiskGauge from '../components/RiskGauge';
+import { ArrowRight, Pause, Play, RotateCcw } from 'lucide-react';
+
+import { useSystem } from '../context/SessionContext';
+import { useToast } from '../components/ui/toast';
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../components/ui/card';
+import { Button } from '../components/ui/button';
+import { StatusBadge } from '../components/ui/badge';
+import { Switch } from '../components/ui/switch';
+import { Skeleton } from '../components/ui/skeleton';
+import { EmptyState } from '../components/ui/empty-state';
+import { PageHeader, SectionHeading } from '../components/PageHeader';
+import { Metric } from '../components/Metric';
 import CameraStream from '../components/CameraStream';
 import DetectionCards from '../components/DetectionCards';
+import RiskGauge from '../components/RiskGauge';
 import AlertCenter from '../components/AlertCenter';
-import EmergencyModal from '../components/EmergencyModal';
-import { fetchTelemetry, fetchAlerts, fetchActiveIncident, startMonitoring, stopMonitoring, resetSession } from '../services/api';
+import SessionChart from '../components/LiveChart';
+import { STATUS_LABELS, fmt } from '../lib/format';
 
-export default function Dashboard({ isDemoMode }) {
-  const [telemetry, setTelemetry] = useState({
-    status: 'AWAKE',
-    risk_level: 'LOW',
-    risk_score: 15,
-    average_ear: 0.305,
-    left_ear: 0.31,
-    right_ear: 0.30,
-    closed_duration: 0.0,
-    is_eyes_closed: false,
-    drowsiness_events: 0,
-    longest_closure: 0.0,
-    session_avg_ear: 0.305,
-    monitoring_duration_formatted: '00:00:00',
-    fps: 30.0
-  });
+function SessionFact({ label, value }) {
+  return (
+    <div className="flex items-center justify-between gap-3 border-b py-2 last:border-0">
+      <span className="text-[12px] text-muted-foreground">{label}</span>
+      <span className="font-mono text-[13px] tabular">{value}</span>
+    </div>
+  );
+}
 
-  const [alerts, setAlerts] = useState([]);
-  const [activeIncident, setActiveIncident] = useState(null);
-  const [isMonitoring, setIsMonitoring] = useState(true);
-  const [showEmergencyModal, setShowEmergencyModal] = useState(true);
+export default function Dashboard() {
+  const {
+    telemetry,
+    status,
+    riskScore,
+    fps,
+    series,
+    alerts,
+    detections,
+    isMonitoring,
+    paused,
+    cameraConnected,
+    cameraState,
+    demoMode,
+    setDemoMode,
+    activeIncident,
+    acknowledgeAlert,
+    startCamera,
+    stopCamera,
+    resetSession,
+  } = useSystem();
+  const { pushToast } = useToast();
+  const [busy, setBusy] = useState(null);
 
-  // Poll telemetry every 200ms
-  useEffect(() => {
-    const interval = setInterval(async () => {
-      const data = await fetchTelemetry();
-      if (data) {
-        setTelemetry(data);
-        setIsMonitoring(data.is_monitoring);
-      }
-      const alts = await fetchAlerts();
-      if (alts) {
-        setAlerts(alts);
-      }
-      const incRes = await fetchActiveIncident();
-      if (incRes && incRes.active_incident) {
-        setActiveIncident(incRes.active_incident);
-      } else {
-        setActiveIncident(null);
-      }
-    }, 200);
+  const loading = !telemetry;
 
-    return () => clearInterval(interval);
-  }, []);
-
-  const handleStart = async () => {
-    await startMonitoring();
-    setIsMonitoring(true);
+  const run = async (label, fn, successMessage) => {
+    setBusy(label);
+    const res = await fn();
+    setBusy(null);
+    if (res && res.ok === false) {
+      pushToast({ tone: 'danger', title: `${successMessage} failed`, message: res.message });
+    } else {
+      pushToast({ tone: 'signal', title: successMessage });
+    }
   };
-
-  const handleStop = async () => {
-    await stopMonitoring();
-    setIsMonitoring(false);
-  };
-
-  const handleReset = async () => {
-    await resetSession();
-  };
-
-  const status = telemetry?.status || 'AWAKE';
-  const riskLevel = telemetry?.risk_level || 'LOW';
-  const riskScore = telemetry?.risk_score || 15;
-
-  let statusBadgeStyle = 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30';
-  if (status === 'DROWSY' || riskLevel === 'CRITICAL' || activeIncident) {
-    statusBadgeStyle = 'bg-red-500/20 text-red-400 border-red-500/40 animate-pulse';
-  } else if (status === 'CAUTION' || riskLevel === 'WARNING') {
-    statusBadgeStyle = 'bg-amber-500/20 text-amber-400 border-amber-500/40';
-  }
 
   return (
-    <div className="min-h-screen flex flex-col space-y-4 pb-12">
-      
-      {/* Active Incident Warning Banner */}
-      {activeIncident && (
-        <div className="glass-card rounded-xl p-3.5 border-2 border-red-500 bg-red-500/10 flex items-center justify-between gap-4 animate-pulse">
-          <div className="flex items-center gap-3">
-            <ShieldAlert className="w-5 h-5 text-red-500" />
-            <div>
-              <span className="font-extrabold text-white text-xs font-mono block">
-                🚨 ACTIVE EMERGENCY INCIDENT DISPATCHED (ID: {activeIncident.incident_id})
-              </span>
-              <span className="text-[11px] text-red-300">
-                Confidence: {activeIncident.confidence}% | Location: {activeIncident.location?.address}
-              </span>
+    <div className="flex flex-col gap-6">
+      <PageHeader
+        title="Monitor"
+        description="Live driver state from the browser camera. Landmark inference runs on this device; no frame is uploaded."
+        actions={
+          <>
+            <div className="flex items-center gap-2 rounded-md border px-3 py-1.5">
+              <span className="text-[12px] text-muted-foreground">Demo data</span>
+              <Switch checked={demoMode} onCheckedChange={setDemoMode} aria-label="Toggle demo mode" />
             </div>
-          </div>
-          <Link
-            to="/emergency"
-            className="px-3.5 py-1.5 rounded-lg bg-red-600 hover:bg-red-500 text-white font-extrabold text-xs flex items-center gap-1 shrink-0"
-          >
-            <span>Open Emergency Center</span>
-            <ArrowRight className="w-3.5 h-3.5" />
-          </Link>
-        </div>
-      )}
-
-      {/* Top Header Command Bar */}
-      <div className="glass-card rounded-xl p-4 flex flex-col sm:flex-row items-center justify-between gap-4 border border-slate-800">
-        
-        {/* Status Badge */}
-        <div className="flex items-center gap-4">
-          <div className={`px-4 py-2 rounded-lg border font-extrabold text-sm tracking-wide uppercase flex items-center gap-2 ${statusBadgeStyle}`}>
-            {status === 'DROWSY' || activeIncident ? (
-              <AlertOctagon className="w-5 h-5 text-red-500 animate-spin" />
-            ) : status === 'CAUTION' ? (
-              <AlertTriangle className="w-5 h-5 text-amber-500" />
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => run('reset', async () => resetSession() || { ok: true }, 'Session reset')}
+              disabled={busy === 'reset' || demoMode}
+            >
+              <RotateCcw className="size-4" />
+              {busy === 'reset' ? 'Resetting...' : 'Reset session'}
+            </Button>
+            {cameraConnected ? (
+              <Button variant="destructive" size="sm" onClick={stopCamera}>
+                <Pause className="size-4" />
+                Stop camera
+              </Button>
             ) : (
-              <ShieldCheck className="w-5 h-5 text-emerald-400" />
+              <Button size="sm" onClick={() => startCamera()} disabled={cameraState === 'requesting' || demoMode}>
+                <Play className="size-4" />
+                {cameraState === 'requesting' ? 'Starting...' : 'Start camera'}
+              </Button>
             )}
-            <span>DRIVER STATUS: {activeIncident ? 'CRITICAL INCIDENT' : status}</span>
+          </>
+        }
+      />
+
+      {activeIncident && (
+        <div className="flex flex-col gap-2 rounded-lg border border-destructive/40 bg-destructive/5 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex flex-wrap items-center gap-2">
+            <StatusBadge tone="danger">Incident open</StatusBadge>
+            <span className="text-[13px]">
+              {activeIncident.incident_id} · {activeIncident.severity} · confidence{' '}
+              {fmt(activeIncident.confidence, 0)}%
+            </span>
           </div>
-
-          <div className="hidden md:flex items-center gap-6 text-xs text-slate-400 font-mono">
-            <span className="flex items-center gap-1.5"><User className="w-3.5 h-3.5 text-blue-400" /> DRV-8842 (Rajesh S.)</span>
-            <span className="flex items-center gap-1.5"><Truck className="w-3.5 h-3.5 text-blue-400" /> VH-9021 (Cascadia ADAS)</span>
-          </div>
+          <Button asChild size="sm" variant="outline">
+            <Link to="/emergency">
+              Open incident
+              <ArrowRight className="size-4" />
+            </Link>
+          </Button>
         </div>
-
-        {/* Monitoring Controls */}
-        <div className="flex items-center gap-2">
-          {isMonitoring ? (
-            <button
-              onClick={handleStop}
-              className="px-3.5 py-1.5 rounded-lg bg-red-600/20 hover:bg-red-600/30 text-red-400 border border-red-500/30 font-bold text-xs flex items-center gap-1.5 transition-colors"
-            >
-              <Square className="w-3.5 h-3.5 fill-red-400" />
-              <span>STOP MONITORING</span>
-            </button>
-          ) : (
-            <button
-              onClick={handleStart}
-              className="px-3.5 py-1.5 rounded-lg bg-emerald-600/20 hover:bg-emerald-600/30 text-emerald-400 border border-emerald-500/30 font-bold text-xs flex items-center gap-1.5 transition-colors"
-            >
-              <Play className="w-3.5 h-3.5 fill-emerald-400" />
-              <span>START MONITORING</span>
-            </button>
-          )}
-
-          <button
-            onClick={handleReset}
-            className="px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 font-bold text-xs flex items-center gap-1.5 transition-colors"
-            title="Reset Session Counters"
-          >
-            <RotateCcw className="w-3.5 h-3.5" />
-            <span>RESET</span>
-          </button>
-        </div>
-
-      </div>
-
-      {/* Main Command Center Grid */}
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-4">
-        
-        {/* Left Column: Risk Gauge & Live Session Metrics (4 Cols) */}
-        <div className="lg:col-span-4 space-y-4">
-          
-          {/* Radial Risk Gauge */}
-          <RiskGauge score={activeIncident ? 95 : riskScore} level={activeIncident ? 'CRITICAL' : riskLevel} />
-
-          {/* EAR Breakdown & Session Metrics Box */}
-          <div className="glass-card rounded-xl p-4 border border-slate-800 space-y-3">
-            <h4 className="text-xs font-bold uppercase tracking-wider text-slate-400 border-b border-slate-800 pb-2">
-              SESSION METRICS TELEMETRY
-            </h4>
-            
-            <div className="grid grid-cols-2 gap-3 text-xs font-mono">
-              <div className="p-2.5 rounded-lg bg-slate-950 border border-slate-800">
-                <span className="text-slate-500 block text-[10px] uppercase">Monitoring Time</span>
-                <span className="font-bold text-white text-sm">{telemetry.monitoring_duration_formatted || '00:00:00'}</span>
-              </div>
-              <div className="p-2.5 rounded-lg bg-slate-950 border border-slate-800">
-                <span className="text-slate-500 block text-[10px] uppercase">Drowsy Events</span>
-                <span className="font-bold text-amber-400 text-sm">{telemetry.drowsiness_events || 0}</span>
-              </div>
-              <div className="p-2.5 rounded-lg bg-slate-950 border border-slate-800">
-                <span className="text-slate-500 block text-[10px] uppercase">Longest Closure</span>
-                <span className="font-bold text-red-400 text-sm">{(telemetry.longest_closure || 0).toFixed(2)} sec</span>
-              </div>
-              <div className="p-2.5 rounded-lg bg-slate-950 border border-slate-800">
-                <span className="text-slate-500 block text-[10px] uppercase">Session Avg EAR</span>
-                <span className="font-bold text-blue-400 text-sm">{(telemetry.session_avg_ear || 0.305).toFixed(3)}</span>
-              </div>
-            </div>
-          </div>
-
-        </div>
-
-        {/* Central & Right Columns (8 Cols) */}
-        <div className="lg:col-span-8 space-y-4">
-          
-          {/* Central Live Video Camera Stream */}
-          <CameraStream telemetry={telemetry} isMonitoring={isMonitoring} isDemoMode={isDemoMode} />
-
-          {/* AI 6-Channel Detection Cards */}
-          <DetectionCards telemetry={telemetry} />
-
-          {/* Live Alert Center */}
-          <AlertCenter alerts={alerts} onRefresh={async () => setAlerts(await fetchAlerts())} />
-
-        </div>
-
-      </div>
-
-      {/* Emergency Modal Popover */}
-      {showEmergencyModal && (
-        <EmergencyModal
-          incident={activeIncident}
-          telemetry={telemetry}
-          onAcknowledge={() => setShowEmergencyModal(false)}
-        />
       )}
 
+      {paused && cameraConnected && (
+        <p className="rounded-lg border bg-muted/40 px-4 py-2 text-[12px] text-muted-foreground">
+          Inference is paused because the tab is hidden. Return to this tab to resume.
+        </p>
+      )}
+
+      <Card>
+        <CardContent className="grid grid-cols-2 gap-6 p-5 lg:grid-cols-3">
+          <div>
+            <p className="pb-2 text-[12px] font-medium text-muted-foreground">Risk score</p>
+            {loading ? <Skeleton className="h-12 w-32" /> : <RiskGauge score={riskScore} status={status} />}
+          </div>
+          {loading ? (
+            <>
+              <Skeleton className="h-14 w-full" />
+              <Skeleton className="h-14 w-full" />
+            </>
+          ) : (
+            <>
+              <Metric
+                label="Drowsiness events"
+                value={telemetry?.drowsiness_events ?? 0}
+                hint="Counted since the session started"
+              />
+              <Metric label="Session uptime" value={telemetry?.monitoring_duration_formatted || '00:00:00'} hint="Slot clock" />
+            </>
+          )}
+          <div className="col-span-2 lg:col-span-1">
+            <Metric
+              label="Inference rate"
+              value={fps ? fmt(fps, 0) : '--'}
+              unit="fps"
+              hint="Frames analysed in the last second"
+            />
+          </div>
+        </CardContent>
+      </Card>
+
+      <div className="grid gap-4 lg:grid-cols-3">
+        <div className="flex flex-col gap-4 lg:col-span-2">
+          <CameraStream />
+
+          <Card>
+            <CardHeader>
+              <CardTitle>Risk over time</CardTitle>
+              <CardDescription>Sampled from the in-browser loop, roughly the last 30 seconds.</CardDescription>
+            </CardHeader>
+            <CardContent>
+              <SessionChart data={series} dataKey="risk" label="Risk score" domain={[0, 100]} />
+            </CardContent>
+          </Card>
+        </div>
+
+        <div className="flex flex-col gap-4">
+          <Card>
+            <CardHeader>
+              <CardTitle>Detectors</CardTitle>
+              <CardDescription>Derived from the live landmark output</CardDescription>
+            </CardHeader>
+            <CardContent>
+              <DetectionCards detections={detections} loading={!detections} />
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader>
+              <CardTitle>Session detail</CardTitle>
+              <CardDescription>Raw values behind the state machine</CardDescription>
+            </CardHeader>
+            <CardContent className="pt-0">
+              {loading ? (
+                <div className="flex flex-col gap-2">
+                  {[0, 1, 2, 3].map((row) => (
+                    <Skeleton key={row} className="h-7 w-full" />
+                  ))}
+                </div>
+              ) : (
+                <div>
+                  <SessionFact label="State" value={STATUS_LABELS[status] || 'Unknown'} />
+                  <SessionFact label="Average EAR" value={fmt(telemetry?.average_ear, 3)} />
+                  <SessionFact label="Session average EAR" value={fmt(telemetry?.session_avg_ear, 3)} />
+                  <SessionFact label="Closed now" value={`${fmt(telemetry?.closed_duration, 1)}s`} />
+                  <SessionFact label="Longest closure" value={`${fmt(telemetry?.longest_closure, 1)}s`} />
+                  <SessionFact label="Faces in frame" value={telemetry?.face_count ?? '--'} />
+                  <SessionFact label="Monitoring" value={isMonitoring ? 'Running' : 'Paused'} />
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        </div>
+      </div>
+
+      <section>
+        <SectionHeading
+          title="Recent alerts"
+          description="Written by the detector when drowsiness or phone use crosses a threshold."
+          actions={
+            <Button asChild variant="ghost" size="sm">
+              <Link to="/alerts">
+                All alerts
+                <ArrowRight className="size-4" />
+              </Link>
+            </Button>
+          }
+        />
+        <Card>
+          <CardContent className="pt-5">
+            {alerts.length === 0 ? (
+              <EmptyState
+                title="No alerts yet"
+                description="The detector has not logged any event in this browser."
+              />
+            ) : (
+              <AlertCenter alerts={alerts} loading={false} limit={5} onChanged={() => {}} />
+            )}
+          </CardContent>
+        </Card>
+      </section>
     </div>
   );
 }

@@ -1,151 +1,126 @@
-import React, { useState, useEffect, useRef } from 'react';
-import { AlertOctagon, Volume2, ShieldAlert, CheckCircle, PhoneCall, XCircle } from 'lucide-react';
-import { cancelEmergency, requestEmergencyHelp } from '../services/api';
+import React from 'react';
+import { ShieldAlert } from 'lucide-react';
 
-export default function EmergencyModal({ incident, telemetry, onAcknowledge, onCancel }) {
-  const [countdown, setCountdown] = useState(15);
-  const [canceling, setCanceling] = useState(false);
-  const audioRef = useRef(null);
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from './ui/dialog';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from './ui/tabs';
+import { Button } from './ui/button';
+import { StatusBadge } from './ui/badge';
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from './ui/table';
+import { EmptyState } from './ui/empty-state';
+import EmergencyTimeline from './EmergencyTimeline';
+import EmergencyMap from './EmergencyMap';
+import { fmt } from '../lib/format';
 
-  const activeInc = incident || (telemetry?.status === 'DROWSY' ? {
-    incident_id: 'NTK-VERIFY-01',
-    confidence: 78,
-    severity: 'HIGH',
-    location: { address: 'Rajiv Chowk, New Delhi' },
-    verification_seconds_remaining: 15
-  } : null);
+function severityTone(severity) {
+  const key = String(severity || '').toUpperCase();
+  if (key === 'CRITICAL' || key === 'HIGH') return 'danger';
+  if (key === 'MEDIUM') return 'warning';
+  return 'neutral';
+}
 
-  useEffect(() => {
-    if (!activeInc) return;
+export default function EmergencyModal({ open, onOpenChange, incident, busy, onCancel, onRequestHelp, onResolve }) {
+  if (!incident) return null;
 
-    // Play YouTube Short alarm audio in browser
-    try {
-      if (!audioRef.current) {
-        audioRef.current = new Audio('/assets/alarm.wav');
-        audioRef.current.loop = true;
-      }
-      audioRef.current.play().catch(e => console.log("Audio autoplay prevented:", e));
-    } catch(e) {}
-
-    setCountdown(activeInc.verification_seconds_remaining || 15);
-
-    const timer = setInterval(() => {
-      setCountdown((prev) => {
-        if (prev <= 1) {
-          clearInterval(timer);
-          return 0;
-        }
-        return prev - 1;
-      });
-    }, 1000);
-
-    return () => {
-      clearInterval(timer);
-      if (audioRef.current) {
-        audioRef.current.pause();
-        audioRef.current.currentTime = 0;
-      }
-    };
-  }, [activeInc]);
-
-  if (!activeInc) return null;
-
-  const handleCancelClick = async () => {
-    setCanceling(true);
-    if (audioRef.current) {
-      audioRef.current.pause();
-      audioRef.current.currentTime = 0;
-    }
-    if (activeInc.incident_id) {
-      await cancelEmergency(activeInc.incident_id);
-    }
-    if (onCancel) onCancel();
-    if (onAcknowledge) onAcknowledge();
-    setCanceling(false);
-  };
-
-  const handleRequestHelpClick = async () => {
-    if (audioRef.current) {
-      audioRef.current.pause();
-      audioRef.current.currentTime = 0;
-    }
-    if (activeInc.incident_id) {
-      await requestEmergencyHelp(activeInc.incident_id);
-    }
-    if (onAcknowledge) onAcknowledge();
-  };
-
-  const isCritical = activeInc.confidence >= 90 || activeInc.severity === 'CRITICAL';
+  const notifications = incident.notifications || [];
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/85 backdrop-blur-md animate-fade-in">
-      <div className="bg-slate-900 border-2 border-red-500 rounded-2xl max-w-lg w-full p-6 shadow-2xl glow-red relative overflow-hidden text-center">
-        
-        {/* Top Header Warning Badge */}
-        <div className="w-16 h-16 rounded-2xl bg-red-500/20 border border-red-500/40 flex items-center justify-center mx-auto mb-3 animate-bounce">
-          <AlertOctagon className="w-9 h-9 text-red-500" />
-        </div>
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-2xl">
+        <DialogHeader>
+          <DialogTitle className="flex flex-wrap items-center gap-2">
+            Incident {incident.incident_id}
+            {incident.is_simulated && <StatusBadge tone="warning">Simulated</StatusBadge>}
+          </DialogTitle>
+          <DialogDescription>
+            Opened at {incident.timestamp} · status {String(incident.status || '').replace(/_/g, ' ').toLowerCase()}
+          </DialogDescription>
+        </DialogHeader>
 
-        <h2 className="text-xl font-extrabold text-white uppercase tracking-tight mb-1">
-          {isCritical ? '🚨 CRITICAL ACCIDENT DETECTED' : '⚠ POSSIBLE IMPACT DETECTED'}
-        </h2>
-        
-        <p className="text-red-400 font-mono text-xs font-bold mb-3">
-          {isCritical
-            ? 'Emergency assistance workflow initiated!'
-            : `Assistance will be dispatched automatically in ${countdown} seconds.`}
-        </p>
+        <Tabs defaultValue="overview">
+          <TabsList>
+            <TabsTrigger value="overview">Overview</TabsTrigger>
+            <TabsTrigger value="timeline">Timeline</TabsTrigger>
+            <TabsTrigger value="dispatch">Dispatch ({notifications.length})</TabsTrigger>
+          </TabsList>
 
-        {/* Countdown Badge */}
-        {!isCritical && (
-          <div className="w-20 h-20 rounded-full border-4 border-red-500 bg-red-500/10 flex items-center justify-center mx-auto my-3">
-            <span className="text-3xl font-extrabold font-mono text-red-400">{countdown}s</span>
-          </div>
-        )}
+          <TabsContent value="overview" className="flex flex-col gap-4">
+            <div className="grid grid-cols-2 gap-4 rounded-lg border p-4 sm:grid-cols-4">
+              <div>
+                <p className="text-[12px] text-muted-foreground">Confidence</p>
+                <p className="text-[15px] font-semibold tabular">{fmt(incident.confidence, 0)}%</p>
+              </div>
+              <div>
+                <p className="text-[12px] text-muted-foreground">Severity</p>
+                <StatusBadge tone={severityTone(incident.severity)} className="mt-1">
+                  {incident.severity}
+                </StatusBadge>
+              </div>
+              <div>
+                <p className="text-[12px] text-muted-foreground">Driver condition</p>
+                <p className="text-[13px] font-medium">{incident.driver_condition || 'Unknown'}</p>
+              </div>
+              <div>
+                <p className="text-[12px] text-muted-foreground">Source</p>
+                <p className="text-[13px] font-medium">{incident.is_simulated ? 'Simulation' : 'Sensor input'}</p>
+              </div>
+            </div>
+            <EmergencyMap incident={incident} />
+          </TabsContent>
 
-        {/* Incident Details Card */}
-        <div className="bg-red-500/10 border border-red-500/30 rounded-xl p-3.5 mb-5 text-left text-xs text-slate-200 space-y-1.5 font-mono">
-          <div className="flex justify-between">
-            <span className="text-slate-400">Incident ID:</span>
-            <span className="font-bold text-white">{activeInc.incident_id || 'NTK-2026-00124'}</span>
-          </div>
-          <div className="flex justify-between">
-            <span className="text-slate-400">Accident Confidence:</span>
-            <span className="font-bold text-red-400">{activeInc.confidence || 85}%</span>
-          </div>
-          <div className="flex justify-between">
-            <span className="text-slate-400">GPS Location:</span>
-            <span className="font-bold text-slate-200 truncate max-w-[200px]">{activeInc.location?.address || 'Rajiv Chowk, New Delhi'}</span>
-          </div>
-          <div className="flex justify-between">
-            <span className="text-slate-400">Audible Alarm:</span>
-            <span className="font-bold text-emerald-400 flex items-center gap-1">
-              <Volume2 className="w-3.5 h-3.5 animate-pulse" /> YOUTUBE SHORT ALARM ACTIVE
-            </span>
-          </div>
-        </div>
+          <TabsContent value="timeline">
+            <EmergencyTimeline items={incident.timeline} />
+          </TabsContent>
 
-        {/* Action Buttons */}
-        <div className="flex flex-col sm:flex-row gap-3">
-          <button
-            onClick={handleCancelClick}
-            disabled={canceling}
-            className="flex-1 py-3 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 font-extrabold text-xs uppercase tracking-wider border border-slate-700 transition-all flex items-center justify-center gap-2"
-          >
-            <XCircle className="w-4 h-4 text-emerald-400" />
-            <span>I'M SAFE -- CANCEL</span>
-          </button>
+          <TabsContent value="dispatch" className="flex flex-col gap-3">
+            <p className="text-[12px] text-muted-foreground">
+              No SMS, call or webhook leaves this server. Every dispatch record below was produced by the simulated
+              gateway.
+            </p>
+            {notifications.length ? (
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Channel</TableHead>
+                    <TableHead>Status</TableHead>
+                    <TableHead className="hidden sm:table-cell">Delivery</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {notifications.map((note) => (
+                    <TableRow key={note.id}>
+                      <TableCell className="font-medium">{note.service}</TableCell>
+                      <TableCell>
+                        <StatusBadge tone="warning">{note.status}</StatusBadge>
+                      </TableCell>
+                      <TableCell className="hidden text-[12px] text-muted-foreground sm:table-cell">
+                        {note.delivery_channel}
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            ) : (
+              <EmptyState
+                icon={ShieldAlert}
+                title="No dispatch records"
+                description="This incident has not triggered the notification service."
+              />
+            )}
+          </TabsContent>
+        </Tabs>
 
-          <button
-            onClick={handleRequestHelpClick}
-            className="flex-1 py-3 rounded-xl bg-red-600 hover:bg-red-500 text-white font-extrabold text-xs uppercase tracking-wider shadow-lg shadow-red-600/30 transition-all flex items-center justify-center gap-2"
-          >
-            <PhoneCall className="w-4 h-4" />
-            <span>REQUEST HELP NOW</span>
-          </button>
-        </div>
-
-      </div>
-    </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={onCancel} disabled={busy}>
+            I'm safe - cancel
+          </Button>
+          <Button variant="secondary" onClick={onResolve} disabled={busy}>
+            Mark resolved
+          </Button>
+          <Button onClick={onRequestHelp} disabled={busy}>
+            Request help now
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }

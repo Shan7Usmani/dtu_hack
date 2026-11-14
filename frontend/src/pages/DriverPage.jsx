@@ -1,122 +1,103 @@
-import React, { useState, useEffect } from 'react';
-import { User, Truck, ShieldCheck, Award, MapPin, Calendar, Activity } from 'lucide-react';
-import { fetchDriver } from '../services/api';
+import React from 'react';
+import { RotateCcw, UserX } from 'lucide-react';
+
+import { useSystem } from '../context/SessionContext';
+import { useToast } from '../components/ui/toast';
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../components/ui/card';
+import { Button } from '../components/ui/button';
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../components/ui/table';
+import { EmptyState } from '../components/ui/empty-state';
+import { Skeleton } from '../components/ui/skeleton';
+import { PageHeader, SectionHeading } from '../components/PageHeader';
+import { STATUS_LABELS, fmt } from '../lib/format';
 
 export default function DriverPage() {
-  const [driver, setDriver] = useState({
-    driver_id: 'DRV-8842',
-    name: 'Capt. Rajesh Sharma',
-    vehicle_id: 'VH-9021',
-    vehicle_model: 'Freightliner Cascadia ADAS-Ready',
-    registration: 'KA-01-MJ-4920',
-    safety_score: 94,
-    total_trips: 142,
-    total_distance_km: 18450,
-    status: 'ACTIVE_SHIFT'
-  });
+  const { telemetry, status, alerts, isMonitoring, cameraConnected, resolution, resetSession } = useSystem();
+  const { pushToast } = useToast();
 
-  useEffect(() => {
-    async function load() {
-      const res = await fetchDriver();
-      if (res) setDriver(res);
-    }
-    load();
-  }, []);
+  const loading = !telemetry;
+
+  const reset = () => {
+    resetSession();
+    pushToast({
+      tone: 'signal',
+      title: 'Session reset',
+      message: 'Closure counters and the sampled series were cleared in this tab.',
+    });
+  };
+
+  const metrics = [
+    { label: 'State', value: STATUS_LABELS[status] || 'Unknown' },
+    { label: 'Session uptime', value: telemetry?.monitoring_duration_formatted || '00:00:00' },
+    { label: 'Drowsiness events', value: telemetry?.drowsiness_events ?? 0 },
+    { label: 'Longest closure', value: `${fmt(telemetry?.longest_closure, 1)} s` },
+    { label: 'Average EAR now', value: fmt(telemetry?.average_ear, 3) },
+    { label: 'Session average EAR', value: fmt(telemetry?.session_avg_ear, 3) },
+    { label: 'Phone detected', value: telemetry?.phone_detected ? 'Yes' : 'No' },
+    { label: 'Alerts logged', value: alerts.length },
+    { label: 'Monitoring', value: isMonitoring ? 'Running' : 'Paused' },
+    { label: 'Camera', value: cameraConnected ? 'Live' : 'Stopped' },
+    { label: 'Capture resolution', value: resolution ? `${resolution.width} x ${resolution.height}` : '--' },
+  ];
 
   return (
-    <div className="min-h-screen space-y-6 pb-12">
-      
-      {/* Header Banner */}
-      <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 border-b border-slate-800 pb-4">
-        <div>
-          <h1 className="text-2xl font-extrabold text-white tracking-tight flex items-center gap-2">
-            <User className="w-6 h-6 text-blue-400" />
-            <span>Driver Profile & Vehicle Information</span>
-          </h1>
-          <p className="text-slate-400 text-xs mt-1">Driver safety credentials, vehicle assignment, and shift record</p>
-        </div>
-      </div>
+    <div className="flex flex-col gap-6">
+      <PageHeader
+        title="Session"
+        description="What the current monitoring session has measured, for the person in front of the camera."
+        actions={
+          <Button variant="outline" size="sm" onClick={reset}>
+            <RotateCcw className="size-4" />
+            Reset session
+          </Button>
+        }
+      />
 
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-        
-        {/* Driver Profile Card (5 Cols) */}
-        <div className="lg:col-span-5 glass-card rounded-xl p-6 border border-slate-800 space-y-6 text-center">
-          
-          <div className="w-20 h-20 rounded-2xl bg-gradient-to-tr from-blue-600 to-emerald-500 p-0.5 mx-auto shadow-xl">
-            <div className="w-full h-full bg-slate-950 rounded-[14px] flex items-center justify-center">
-              <User className="w-10 h-10 text-blue-400" />
-            </div>
-          </div>
+      <Card>
+        <CardHeader>
+          <CardTitle>Driver profile</CardTitle>
+          <CardDescription>This route exists, but the data behind it does not.</CardDescription>
+        </CardHeader>
+        <CardContent>
+          <EmptyState
+            icon={UserX}
+            title="No driver profile configured"
+            description="There is no roster, vehicle register or licence store in this build, and no backend to ask. Rather than showing an invented name, vehicle and safety score, this page shows nothing. The session below belongs to whoever is in front of the camera."
+          />
+        </CardContent>
+      </Card>
 
-          <div>
-            <h2 className="text-xl font-extrabold text-white">{driver.name}</h2>
-            <span className="text-xs font-mono text-slate-400">{driver.driver_id}</span>
-            <div className="mt-2 inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 text-xs font-bold font-mono">
-              <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
-              <span>{driver.status}</span>
-            </div>
-          </div>
-
-          {/* Safety Score Rating */}
-          <div className="p-4 rounded-xl bg-slate-900/80 border border-slate-800 flex items-center justify-between font-mono">
-            <div className="text-left">
-              <span className="text-[10px] text-slate-500 block uppercase font-bold">Overall Safety Rating</span>
-              <span className="text-xs text-slate-300">Top 5% Fleet Safety</span>
-            </div>
-            <div className="text-right">
-              <span className="text-3xl font-extrabold text-emerald-400">{driver.safety_score}</span>
-              <span className="text-xs text-slate-500"> / 100</span>
-            </div>
-          </div>
-
-          {/* Badges */}
-          <div className="space-y-2 text-left">
-            <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block mb-2">Safety Badges</span>
-            <div className="flex flex-wrap gap-2">
-              <span className="px-2.5 py-1 rounded bg-blue-500/10 text-blue-400 border border-blue-500/20 text-xs font-bold flex items-center gap-1">
-                <Award className="w-3.5 h-3.5" /> 100+ Safe Shifts
-              </span>
-              <span className="px-2.5 py-1 rounded bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 text-xs font-bold flex items-center gap-1">
-                <ShieldCheck className="w-3.5 h-3.5" /> Zero Violations
-              </span>
-            </div>
-          </div>
-
-        </div>
-
-        {/* Assigned Vehicle & Trip Specs (7 Cols) */}
-        <div className="lg:col-span-7 glass-card rounded-xl p-6 border border-slate-800 space-y-6">
-          <h3 className="text-xs font-bold uppercase tracking-wider text-slate-300 border-b border-slate-800 pb-3 flex items-center gap-2">
-            <Truck className="w-4 h-4 text-blue-400" />
-            <span>ASSIGNED VEHICLE SPECIFICATIONS</span>
-          </h3>
-
-          <div className="grid grid-cols-2 gap-4 font-mono text-xs">
-            <div className="p-3 rounded-lg bg-slate-900/60 border border-slate-800">
-              <span className="text-slate-500 block text-[10px] uppercase">Vehicle ID</span>
-              <span className="font-bold text-white text-sm">{driver.vehicle_id}</span>
-            </div>
-            <div className="p-3 rounded-lg bg-slate-900/60 border border-slate-800">
-              <span className="text-slate-500 block text-[10px] uppercase">Registration Number</span>
-              <span className="font-bold text-blue-400 text-sm">{driver.registration}</span>
-            </div>
-            <div className="p-3 rounded-lg bg-slate-900/60 border border-slate-800 col-span-2">
-              <span className="text-slate-500 block text-[10px] uppercase">Vehicle Model</span>
-              <span className="font-bold text-slate-200 text-sm">{driver.vehicle_model}</span>
-            </div>
-            <div className="p-3 rounded-lg bg-slate-900/60 border border-slate-800">
-              <span className="text-slate-500 block text-[10px] uppercase">Total Completed Trips</span>
-              <span className="font-bold text-white text-sm">{driver.total_trips} Trips</span>
-            </div>
-            <div className="p-3 rounded-lg bg-slate-900/60 border border-slate-800">
-              <span className="text-slate-500 block text-[10px] uppercase">Total Distance Logged</span>
-              <span className="font-bold text-emerald-400 text-sm">{driver.total_distance_km.toLocaleString()} km</span>
-            </div>
-          </div>
-        </div>
-
-      </div>
-
+      <section>
+        <SectionHeading title="Session metrics" description="Measured values only, from the in-browser detector." />
+        <Card>
+          <CardContent className="pt-5">
+            {loading ? (
+              <div className="flex flex-col gap-2">
+                {[0, 1, 2, 3, 4].map((row) => (
+                  <Skeleton key={row} className="h-8 w-full" />
+                ))}
+              </div>
+            ) : (
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Metric</TableHead>
+                    <TableHead className="text-right">Value</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {metrics.map((row) => (
+                    <TableRow key={row.label}>
+                      <TableCell className="font-medium">{row.label}</TableCell>
+                      <TableCell className="text-right font-mono text-[13px] tabular">{row.value}</TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            )}
+          </CardContent>
+        </Card>
+      </section>
     </div>
   );
 }

@@ -1,163 +1,220 @@
-import React, { useState, useRef, useEffect } from 'react';
-import { Camera, Video, AlertTriangle, RefreshCw, Phone } from 'lucide-react';
-import { processFrame } from '../services/api';
+import React, { useEffect, useRef } from 'react';
+import { AlertTriangle, Camera, CameraOff, Phone, Play, Square, Video } from 'lucide-react';
 
-export default function CameraStream({ telemetry, isMonitoring, isDemoMode }) {
-  const [camMode, setCamMode] = useState('server'); // 'server' or 'browser'
-  const [browserFrame, setBrowserFrame] = useState(null);
-  const [camError, setCamError] = useState(null);
-  
-  const videoRef = useRef(null);
-  const canvasRef = useRef(null);
-  const intervalRef = useRef(null);
+import { useSession } from '../context/SessionContext';
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './ui/card';
+import { Button } from './ui/button';
+import { StatusBadge } from './ui/badge';
+import { EmptyState } from './ui/empty-state';
+import { fmt } from '../lib/format';
 
-  // Enable Browser Camera (getUserMedia)
-  const startBrowserCam = async () => {
-    try {
-      setCamError(null);
-      const stream = await navigator.mediaDevices.getUserMedia({ video: { width: 640, height: 480 } });
-      if (videoRef.current) {
-        videoRef.current.srcObject = stream;
-      }
-      setCamMode('browser');
+function CameraNotice({ icon: Icon = CameraOff, title, description, action }) {
+  return (
+    <div className="flex flex-col items-center justify-center gap-2 px-6 py-10 text-center">
+      <div className="flex size-9 items-center justify-center rounded-lg border bg-muted/50">
+        <Icon className="size-4 text-muted-foreground" />
+      </div>
+      <p className="text-[13px] font-medium">{title}</p>
+      <p className="max-w-sm text-[12px] leading-relaxed text-muted-foreground">{description}</p>
+      {action && <div className="mt-2">{action}</div>}
+    </div>
+  );
+}
 
-      if (intervalRef.current) clearInterval(intervalRef.current);
+/**
+ * Browser camera panel. The MediaStream is owned by SessionProvider (which also
+ * feeds the inference loop); this component only shows a preview of it plus the
+ * live readouts the detectors produce.
+ */
+export default function CameraStream() {
+  const {
+    cameraState,
+    cameraError,
+    cameraConnected,
+    stream,
+    devices,
+    deviceId,
+    selectDevice,
+    startCamera,
+    stopCamera,
+    resolution,
+    engineStatus,
+    engineError,
+    inferenceFps,
+    lastInferenceMs,
+    framesProcessed,
+    paused,
+    telemetry,
+    demoMode,
+  } = useSession();
 
-      intervalRef.current = setInterval(async () => {
-        if (!videoRef.current || !canvasRef.current) return;
-        const video = videoRef.current;
-        const canvas = canvasRef.current;
-        const ctx = canvas.getContext('2d');
-
-        if (video.readyState >= 2) {
-          ctx.drawImage(video, 0, 0, 640, 480);
-          const base64Data = canvas.toDataURL('image/jpeg', 0.8);
-          const res = await processFrame(base64Data);
-          if (res && res.status === 'ok' && res.annotated_image) {
-            setBrowserFrame(res.annotated_image);
-          }
-        }
-      }, 60);
-
-    } catch (err) {
-      setCamError(`Browser camera error: ${err.message}`);
-      setCamMode('server');
-    }
-  };
-
-  const switchToServerCam = () => {
-    if (intervalRef.current) clearInterval(intervalRef.current);
-    if (videoRef.current && videoRef.current.srcObject) {
-      videoRef.current.srcObject.getTracks().forEach(track => track.stop());
-    }
-    setCamMode('server');
-    setBrowserFrame(null);
-  };
+  const previewRef = useRef(null);
 
   useEffect(() => {
-    return () => {
-      if (intervalRef.current) clearInterval(intervalRef.current);
-    };
-  }, []);
+    if (previewRef.current) previewRef.current.srcObject = stream || null;
+  }, [stream, cameraState]);
 
-  const status = telemetry?.status || 'AWAKE';
-  const isDrowsy = status === 'DROWSY';
-  const isPhoneDetected = telemetry?.phone_detected || false;
+  const status = telemetry?.status || 'STANDBY';
+  const phone = Boolean(telemetry?.phone_detected);
+  const drowsy = status === 'DROWSY';
+
+  const controls = (
+    <div className="flex flex-wrap items-center gap-1.5">
+      {devices.length > 1 && (
+        <select
+          value={deviceId || ''}
+          onChange={(event) => selectDevice(event.target.value)}
+          aria-label="Camera device"
+          className="h-8 max-w-[11rem] rounded-md border bg-background px-2 text-[12px] outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        >
+          {devices.map((device) => (
+            <option key={device.deviceId} value={device.deviceId}>
+              {device.label}
+            </option>
+          ))}
+        </select>
+      )}
+      {cameraConnected ? (
+        <Button variant="outline" size="sm" onClick={stopCamera}>
+          <Square className="size-3.5" />
+          Stop camera
+        </Button>
+      ) : (
+        <Button variant="outline" size="sm" onClick={() => startCamera()} disabled={cameraState === 'requesting'}>
+          <Play className="size-3.5" />
+          {cameraState === 'requesting' ? 'Starting...' : 'Start camera'}
+        </Button>
+      )}
+    </div>
+  );
 
   return (
-    <div className={`glass-card rounded-xl p-4 relative overflow-hidden flex flex-col items-center justify-center border ${
-      isDrowsy || isPhoneDetected ? 'border-red-500/80 glow-red' : 'border-slate-800'
-    }`}>
-      
-      {/* Stream Controls Overlay Header */}
-      <div className="w-full flex items-center justify-between mb-3 px-1">
-        <div className="flex items-center gap-2">
-          <span className="relative flex h-2.5 w-2.5">
-            <span className={`animate-ping absolute inline-flex h-full w-full rounded-full ${
-              isDrowsy || isPhoneDetected ? 'bg-red-400' : 'bg-emerald-400'
-            } opacity-75`}></span>
-            <span className={`relative inline-flex rounded-full h-2.5 w-2.5 ${
-              isDrowsy || isPhoneDetected ? 'bg-red-500' : 'bg-emerald-500'
-            }`}></span>
-          </span>
-          <span className="text-xs font-bold uppercase tracking-wider text-slate-300">
-            {isDemoMode ? 'SIMULATED STREAM (DEMO MODE)' : camMode === 'browser' ? 'CHROME HTML5 WEBCAM' : 'OPENCV BACKEND STREAM'}
-          </span>
+    <Card>
+      <CardHeader className="flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+        <div>
+          <CardTitle>Camera</CardTitle>
+          <CardDescription>
+            {demoMode
+              ? 'Demo mode - no frames are captured'
+              : 'In-browser capture. Face and hand landmarks run in WebAssembly on this device.'}
+          </CardDescription>
         </div>
+        <div className="flex flex-wrap items-center gap-1.5">
+          <StatusBadge
+            tone={demoMode ? 'warning' : cameraConnected ? (drowsy || phone ? 'danger' : 'success') : 'neutral'}
+          >
+            {demoMode ? 'Demo' : cameraConnected ? (phone ? 'Phone' : drowsy ? 'Drowsy' : 'Live') : 'Idle'}
+          </StatusBadge>
+          {!demoMode && controls}
+        </div>
+      </CardHeader>
 
-        <div className="flex items-center gap-2">
-          {camMode === 'server' ? (
-            <button
-              onClick={startBrowserCam}
-              className="px-2.5 py-1 rounded bg-blue-600/20 hover:bg-blue-600/30 text-blue-400 border border-blue-500/30 text-[11px] font-bold flex items-center gap-1 transition-colors"
-            >
-              <Camera className="w-3.5 h-3.5" />
-              <span>Use Chrome Cam</span>
-            </button>
+      <CardContent>
+        <div className="relative aspect-video w-full overflow-hidden rounded-md border bg-muted">
+          {demoMode ? (
+            <CameraNotice
+              icon={Video}
+              title="Simulated telemetry"
+              description="Demo mode replaces camera input with a scripted EAR waveform. Point the camera at a driver and turn demo mode off to measure anything real."
+            />
+          ) : cameraConnected ? (
+            <>
+              <video
+                ref={previewRef}
+                autoPlay
+                muted
+                playsInline
+                className="size-full -scale-x-100 object-cover"
+                aria-label="Live camera preview"
+              />
+              <div className="pointer-events-none absolute inset-x-3 top-3 flex items-start justify-between gap-2">
+                <div className="rounded-md border bg-background/85 px-2 py-1 backdrop-blur-sm">
+                  <p className="text-[11px] font-medium">
+                    {phone ? 'Phone detected' : status.charAt(0) + status.slice(1).toLowerCase().replace(/_/g, ' ')}
+                  </p>
+                  <p className="font-mono text-[11px] tabular text-muted-foreground">
+                    EAR {fmt(telemetry?.average_ear, 3)} · closed {fmt(telemetry?.closed_duration, 1)}s
+                  </p>
+                </div>
+                <div className="rounded-md border bg-background/85 px-2 py-1 text-right backdrop-blur-sm">
+                  <p className="font-mono text-[11px] tabular text-muted-foreground">{fmt(inferenceFps, 0)} fps</p>
+                </div>
+              </div>
+
+              {phone && (
+                <div className="absolute inset-x-4 top-1/2 -translate-y-1/2 rounded-md border border-destructive bg-destructive px-3 py-2 text-center">
+                  <span className="flex items-center justify-center gap-2 text-[13px] font-semibold text-destructive-foreground">
+                    <Phone className="size-4" />
+                    Handheld phone detected near the face
+                  </span>
+                </div>
+              )}
+              {drowsy && !phone && (
+                <div className="absolute inset-x-4 top-1/2 -translate-y-1/2 rounded-md border border-destructive bg-destructive px-3 py-2 text-center">
+                  <span className="flex items-center justify-center gap-2 text-[13px] font-semibold text-destructive-foreground">
+                    <AlertTriangle className="size-4" />
+                    Eyes closed for {fmt(telemetry?.closed_duration, 1)}s
+                  </span>
+                </div>
+              )}
+              {paused && (
+                <div className="absolute inset-0 flex flex-col items-center justify-center gap-1 bg-background/90 text-center">
+                  <p className="text-[13px] font-medium">Inference paused</p>
+                  <p className="text-[12px] text-muted-foreground">The tab was hidden. Return to resume detection.</p>
+                </div>
+              )}
+            </>
+          ) : cameraState === 'requesting' ? (
+            <CameraNotice
+              icon={Camera}
+              title="Waiting for camera permission"
+              description="Allow camera access in the browser prompt. Video never leaves this device."
+            />
+          ) : cameraState === 'error' || cameraState === 'unsupported' ? (
+            <CameraNotice
+              icon={CameraOff}
+              title={cameraState === 'unsupported' ? 'Camera API unavailable' : 'Camera could not start'}
+              description={cameraError || 'No camera stream is available.'}
+              action={
+                <Button size="sm" variant="outline" onClick={() => startCamera()}>
+                  <Play className="size-3.5" />
+                  Retry
+                </Button>
+              }
+            />
           ) : (
-            <button
-              onClick={switchToServerCam}
-              className="px-2.5 py-1 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 text-[11px] font-bold flex items-center gap-1 transition-colors"
-            >
-              <Video className="w-3.5 h-3.5" />
-              <span>Use Server Cam</span>
-            </button>
+            <CameraNotice
+              icon={Camera}
+              title="Camera is stopped"
+              description="Start the camera to load the landmark models and begin measuring eye closure and phone use. Nothing is recorded or uploaded."
+              action={
+                <Button size="sm" onClick={() => startCamera()}>
+                  <Play className="size-3.5" />
+                  Start camera
+                </Button>
+              }
+            />
           )}
         </div>
-      </div>
 
-      {/* Main Video View Container */}
-      <div className="relative w-full aspect-video bg-slate-950 rounded-lg overflow-hidden border border-slate-800 flex items-center justify-center">
-        
-        {camMode === 'server' ? (
-          <img
-            src="/video_feed"
-            alt="Live Driver Safety Monitoring Stream"
-            className="w-full h-full object-cover"
-            onError={() => {
-              setCamError('Server video feed interrupted. Click "Use Chrome Cam" to capture directly.');
-            }}
-          />
-        ) : (
-          <>
-            <video ref={videoRef} autoPlay playsInline className="hidden" />
-            <canvas ref={canvasRef} width="640" height="480" className="hidden" />
-            {browserFrame ? (
-              <img src={browserFrame} alt="Annotated Chrome Stream" className="w-full h-full object-cover" />
-            ) : (
-              <div className="flex flex-col items-center gap-2 text-slate-400">
-                <RefreshCw className="w-6 h-6 animate-spin text-blue-500" />
-                <span className="text-xs font-mono">Initializing Chrome HTML5 Webcam...</span>
-              </div>
-            )}
-          </>
+        {engineError && (
+          <p className="mt-3 flex items-start gap-2 rounded-md border border-warning/40 bg-warning/5 px-3 py-2 text-[12px] leading-relaxed">
+            <AlertTriangle className="mt-0.5 size-3.5 shrink-0 text-warning" />
+            {engineError}
+          </p>
         )}
 
-        {/* Mobile Phone Warning Banner */}
-        {isPhoneDetected && (
-          <div className="absolute top-4 left-4 right-4 bg-red-600 text-white px-4 py-2.5 rounded-lg font-extrabold text-xs text-center tracking-wide uppercase shadow-2xl flex items-center justify-center gap-2 animate-bounce">
-            <Phone className="w-4 h-4 text-white" />
-            <span>📱 PHONE USAGE DETECTED -- BEEP ALARM ACTIVE! KEEP HANDS ON WHEEL!</span>
-          </div>
-        )}
-
-        {/* Drowsiness Warning Banner */}
-        {isDrowsy && !isPhoneDetected && (
-          <div className="absolute bottom-4 left-4 right-4 bg-red-600 text-white px-4 py-3 rounded-lg font-extrabold text-sm text-center tracking-wide uppercase shadow-2xl flex items-center justify-center gap-2 animate-bounce">
-            <AlertTriangle className="w-5 h-5 text-white" />
-            <span>DROWSINESS DETECTED -- TAKE A BREAK IMMEDIATELY!</span>
-          </div>
-        )}
-
-      </div>
-
-      {camError && (
-        <div className="w-full mt-2 p-2 rounded bg-amber-500/10 border border-amber-500/20 text-amber-400 text-[11px] flex items-center justify-between">
-          <span>{camError}</span>
-          <button onClick={startBrowserCam} className="underline font-bold">Try Chrome Cam</button>
+        <div className="mt-3 flex flex-wrap items-center justify-between gap-x-4 gap-y-1 text-[12px] text-muted-foreground">
+          <span className="font-mono tabular">
+            {resolution ? `${resolution.width} x ${resolution.height}` : 'resolution --'} ·{' '}
+            {engineStatus.delegate ? `${engineStatus.delegate} delegate` : 'models idle'} ·{' '}
+            {framesProcessed.toLocaleString()} frames
+          </span>
+          <span className="font-mono tabular">
+            {lastInferenceMs == null ? 'inference --' : `inference ${lastInferenceMs} ms`}
+          </span>
         </div>
-      )}
-
-    </div>
+      </CardContent>
+    </Card>
   );
 }

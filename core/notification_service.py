@@ -42,10 +42,13 @@ class EmergencyNotificationService:
                 "id": f"NOTIF-{len(self.notification_history) + 1:04d}",
                 "incident_id": incident_id,
                 "service": service,
-                "status": "NOTIFIED" if not is_simulated else "SIMULATED_NOTIFIED",
+                # No SMS / telephony / webhook provider is configured in this
+                # build, so every dispatch is recorded as a simulation.
+                "status": "SIMULATED_NOTIFIED",
                 "timestamp": now,
-                "delivery_channel": "Fleet Emergency Gateway" if not is_simulated else "Simulated Engine",
-                "is_simulated": is_simulated
+                "delivery_channel": "Simulated gateway (no provider configured)",
+                "is_simulated": True,
+                "incident_is_simulated": is_simulated
             }
             records.append(rec)
             self.notification_history.insert(0, rec)
@@ -57,10 +60,11 @@ class EmergencyNotificationService:
                     "id": f"NOTIF-{len(self.notification_history) + 1:04d}",
                     "incident_id": incident_id,
                     "service": f"Contact: {contact['name']} ({contact['relationship']})",
-                    "status": "NOTIFIED",
+                    "status": "SIMULATED_NOTIFIED",
                     "timestamp": now,
-                    "delivery_channel": f"SMS to {contact['phone']}",
-                    "is_simulated": is_simulated
+                    "delivery_channel": "Simulated gateway (message not sent)",
+                    "is_simulated": True,
+                    "incident_is_simulated": is_simulated
                 }
                 records.append(rec)
                 self.notification_history.insert(0, rec)
