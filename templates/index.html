@@ -1,0 +1,648 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>NETRAKSHAK — AI Driver Safety Monitor</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;600;700&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --bg-dark: #0F172A;
+            --card-bg: #1E293B;
+            --card-border: #334155;
+            --text-main: #F8FAFC;
+            --text-muted: #94A3B8;
+            --accent-blue: #3B82F6;
+            --color-awake: #10B981;
+            --color-caution: #F59E0B;
+            --color-drowsy: #EF4444;
+            --color-no-driver: #64748B;
+            --color-multi-face: #F97316;
+        }
+
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: var(--bg-dark);
+            color: var(--text-main);
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+            overflow-x: hidden;
+        }
+
+        header {
+            background: var(--card-bg);
+            border-bottom: 1px solid var(--card-border);
+            padding: 16px 28px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
+
+        .brand {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+
+        .brand-logo {
+            font-size: 24px;
+        }
+
+        .brand-title {
+            font-size: 20px;
+            font-weight: 800;
+            letter-spacing: 0.5px;
+            color: var(--text-main);
+        }
+
+        .brand-subtitle {
+            font-size: 13px;
+            color: var(--text-muted);
+            font-weight: 400;
+            border-left: 2px solid var(--card-border);
+            padding-left: 12px;
+        }
+
+        .system-badge {
+            font-size: 11px;
+            font-weight: 700;
+            text-transform: uppercase;
+            padding: 6px 14px;
+            border-radius: 6px;
+            background: rgba(16, 185, 129, 0.15);
+            color: var(--color-awake);
+            border: 1px solid rgba(16, 185, 129, 0.3);
+            letter-spacing: 0.5px;
+        }
+
+        .main-container {
+            display: grid;
+            grid-template-columns: 1.4fr 1fr;
+            gap: 20px;
+            padding: 24px 28px;
+            flex: 1;
+        }
+
+        .video-card {
+            background: var(--card-bg);
+            border: 1px solid var(--card-border);
+            border-radius: 14px;
+            padding: 16px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .video-feed {
+            width: 100%;
+            height: auto;
+            max-height: 520px;
+            border-radius: 10px;
+            object-fit: cover;
+            background: #000;
+            border: 2px solid var(--card-border);
+            transition: border-color 0.3s ease;
+        }
+
+        .video-feed.drowsy-alert {
+            border-color: var(--color-drowsy);
+            animation: pulse-red 0.8s infinite alternate;
+        }
+
+        @keyframes pulse-red {
+            from { box-shadow: 0 0 10px rgba(239, 68, 68, 0.4); }
+            to { box-shadow: 0 0 30px rgba(239, 68, 68, 0.9); }
+        }
+
+        .sidebar {
+            display: flex;
+            flex-direction: column;
+            gap: 16px;
+        }
+
+        .kpi-grid {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 12px;
+        }
+
+        .kpi-card {
+            background: var(--card-bg);
+            border: 1px solid var(--card-border);
+            border-radius: 12px;
+            padding: 14px 18px;
+        }
+
+        .kpi-title {
+            font-size: 10px;
+            font-weight: 700;
+            color: var(--text-muted);
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            margin-bottom: 6px;
+        }
+
+        .kpi-value {
+            font-size: 22px;
+            font-weight: 800;
+            color: var(--text-main);
+        }
+
+        .panel-box {
+            background: var(--card-bg);
+            border: 1px solid var(--card-border);
+            border-radius: 12px;
+            padding: 18px;
+        }
+
+        .panel-header {
+            font-size: 12px;
+            font-weight: 700;
+            color: var(--text-main);
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            margin-bottom: 14px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
+
+        .ear-metrics-grid {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 10px;
+        }
+
+        .ear-box {
+            background: var(--bg-dark);
+            border-radius: 8px;
+            padding: 10px;
+            text-align: center;
+        }
+
+        .ear-label {
+            font-size: 10px;
+            color: var(--text-muted);
+            margin-bottom: 4px;
+        }
+
+        .ear-num {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 16px;
+            font-weight: 700;
+        }
+
+        .stats-list {
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+        }
+
+        .stat-row {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            font-size: 13px;
+        }
+
+        .stat-label {
+            color: var(--text-muted);
+        }
+
+        .stat-val {
+            font-weight: 700;
+            font-family: 'JetBrains Mono', monospace;
+        }
+
+        .event-log-box {
+            background: var(--bg-dark);
+            border-radius: 8px;
+            padding: 12px;
+            height: 130px;
+            overflow-y: auto;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 11px;
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+        }
+
+        .log-entry {
+            color: var(--text-muted);
+            line-height: 1.4;
+        }
+
+        .log-entry.alert {
+            color: var(--color-drowsy);
+            font-weight: 700;
+        }
+
+        .log-entry.warning {
+            color: var(--color-caution);
+        }
+
+        footer {
+            background: var(--card-bg);
+            border-top: 1px solid var(--card-border);
+            padding: 16px 28px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
+
+        .cam-controls {
+            display: flex;
+            gap: 10px;
+        }
+
+        .btn {
+            font-family: 'Inter', sans-serif;
+            font-size: 12px;
+            font-weight: 700;
+            padding: 10px 22px;
+            border-radius: 8px;
+            border: none;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .btn-start {
+            background: #059669;
+            color: white;
+        }
+
+        .btn-start:hover {
+            background: #10B981;
+        }
+
+        .btn-stop {
+            background: #DC2626;
+            color: white;
+        }
+
+        .btn-stop:hover {
+            background: #EF4444;
+        }
+
+        .btn-reset {
+            background: #334155;
+            color: white;
+        }
+
+        .btn-reset:hover {
+            background: #475569;
+        }
+
+        .btn-cam {
+            background: #2563EB;
+            color: white;
+        }
+
+        .btn-cam:hover {
+            background: #3B82F6;
+        }
+
+        .btn-reset-sm {
+            padding: 4px 10px;
+            font-size: 10px;
+        }
+
+        .drowsy-banner {
+            display: none;
+            position: absolute;
+            bottom: 24px;
+            left: 24px;
+            right: 24px;
+            background: var(--color-drowsy);
+            color: white;
+            padding: 14px 20px;
+            border-radius: 8px;
+            font-size: 16px;
+            font-weight: 800;
+            text-align: center;
+            letter-spacing: 0.5px;
+            box-shadow: 0 4px 20px rgba(239, 68, 68, 0.5);
+            animation: bounce 0.6s infinite alternate;
+        }
+
+        @keyframes bounce {
+            from { transform: translateY(0); }
+            to { transform: translateY(-6px); }
+        }
+    </style>
+</head>
+<body>
+
+    <header>
+        <div class="brand">
+            <span class="brand-logo">🛡️</span>
+            <span class="brand-title">NETRAKSHAK</span>
+            <span class="brand-subtitle">AI DRIVER SAFETY MONITOR</span>
+        </div>
+        <div id="systemBadge" class="system-badge">SYSTEM ACTIVE</div>
+    </header>
+
+    <div class="main-container">
+        <!-- Left: Live Video Feed Card -->
+        <div class="video-card">
+            <img id="videoFeed" class="video-feed" src="/video_feed" alt="Live Driver Safety Stream" onerror="enableBrowserWebcam()">
+            <video id="webcam" autoplay playsinline style="display:none;"></video>
+            <canvas id="canvas" width="640" height="480" style="display:none;"></canvas>
+            <div id="drowsyBanner" class="drowsy-banner">⚠️ DROWSINESS DETECTED - TAKE A BREAK!</div>
+        </div>
+
+        <!-- Right: Control & Telemetry Sidebar -->
+        <div class="sidebar">
+
+            <!-- 4 Primary KPI Cards -->
+            <div class="kpi-grid">
+                <div class="kpi-card">
+                    <div class="kpi-title">DRIVER STATUS</div>
+                    <div id="kpiStatus" class="kpi-value" style="color: var(--color-awake);">AWAKE</div>
+                </div>
+                <div class="kpi-card">
+                    <div class="kpi-title">RISK LEVEL</div>
+                    <div id="kpiRisk" class="kpi-value" style="color: var(--color-awake);">LOW</div>
+                </div>
+                <div class="kpi-card">
+                    <div class="kpi-title">EYE STATUS</div>
+                    <div id="kpiEye" class="kpi-value" style="color: var(--color-awake);">OPEN</div>
+                </div>
+                <div class="kpi-card">
+                    <div class="kpi-title">FRAME RATE</div>
+                    <div id="kpiFps" class="kpi-value" style="color: var(--accent-blue);">0 FPS</div>
+                </div>
+            </div>
+
+            <!-- Eye Aspect Ratio (EAR) Panel -->
+            <div class="panel-box">
+                <div class="panel-header">EYE ASPECT RATIO (EAR) METRICS</div>
+                <div class="ear-metrics-grid">
+                    <div class="ear-box">
+                        <div class="ear-label">Left EAR</div>
+                        <div id="earLeft" class="ear-num">0.000</div>
+                    </div>
+                    <div class="ear-box">
+                        <div class="ear-label">Right EAR</div>
+                        <div id="earRight" class="ear-num">0.000</div>
+                    </div>
+                    <div class="ear-box">
+                        <div class="ear-label">Average EAR</div>
+                        <div id="earAvg" class="ear-num">0.000</div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Session Statistics Panel -->
+            <div class="panel-box">
+                <div class="panel-header">
+                    <span>SESSION STATISTICS</span>
+                    <button class="btn btn-reset btn-reset-sm" onclick="resetSession()">RESET</button>
+                </div>
+                <div class="stats-list">
+                    <div class="stat-row">
+                        <span class="stat-label">Monitoring Time:</span>
+                        <span id="statTime" class="stat-val">00:00:00</span>
+                    </div>
+                    <div class="stat-row">
+                        <span class="stat-label">Drowsiness Events:</span>
+                        <span id="statEvents" class="stat-val">0</span>
+                    </div>
+                    <div class="stat-row">
+                        <span class="stat-label">Longest Eye Closure:</span>
+                        <span id="statLongest" class="stat-val">0.00 sec</span>
+                    </div>
+                    <div class="stat-row">
+                        <span class="stat-label">Session Avg EAR:</span>
+                        <span id="statSessionEar" class="stat-val">0.000</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Real-Time Event Log Panel -->
+            <div class="panel-box" style="flex: 1; display: flex; flex-direction: column;">
+                <div class="panel-header">REAL-TIME EVENT LOG</div>
+                <div id="eventLog" class="event-log-box">
+                    <div class="log-entry">• Netrakshak AI Driver Safety System Active.</div>
+                </div>
+            </div>
+
+        </div>
+    </div>
+
+    <!-- Footer Toolbar -->
+    <footer>
+        <div class="cam-controls">
+            <button class="btn btn-cam" onclick="enableBrowserWebcam()">📷 ENABLE CHROME WEBCAM</button>
+        </div>
+        <div style="display: flex; gap: 10px;">
+            <button id="btnStart" class="btn btn-start" onclick="startMonitoring()">▶ START MONITORING</button>
+            <button id="btnStop" class="btn btn-stop" onclick="stopMonitoring()">⏹ STOP MONITORING</button>
+            <button class="btn btn-reset" onclick="resetSession()">🔄 RESET SESSION</button>
+        </div>
+    </footer>
+
+    <script>
+        let isMonitoring = true;
+        let lastStatus = "";
+        let useBrowserCamera = false;
+        let webcamStream = null;
+        let frameProcessingInterval = null;
+
+        // Web Audio Context for Web Alarm Beep
+        let audioCtx = null;
+        let alarmOscillator = null;
+
+        function initAudio() {
+            if (!audioCtx) {
+                audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+            }
+        }
+
+        function playWebAlarm() {
+            initAudio();
+            if (audioCtx && audioCtx.state === 'suspended') {
+                audioCtx.resume();
+            }
+            if (!alarmOscillator && audioCtx) {
+                alarmOscillator = audioCtx.createOscillator();
+                const gain = audioCtx.createGain();
+                alarmOscillator.type = 'sawtooth';
+                alarmOscillator.frequency.setValueAtTime(880, audioCtx.currentTime);
+                gain.gain.setValueAtTime(0.3, audioCtx.currentTime);
+                alarmOscillator.connect(gain);
+                gain.connect(audioCtx.destination);
+                alarmOscillator.start();
+            }
+        }
+
+        function stopWebAlarm() {
+            if (alarmOscillator) {
+                try {
+                    alarmOscillator.stop();
+                    alarmOscillator.disconnect();
+                } catch(e) {}
+                alarmOscillator = null;
+            }
+        }
+
+        async function enableBrowserWebcam() {
+            initAudio();
+            try {
+                const stream = await navigator.mediaDevices.getUserMedia({ video: { width: 640, height: 480 } });
+                const videoEl = document.getElementById('webcam');
+                videoEl.srcObject = stream;
+                webcamStream = stream;
+                useBrowserCamera = true;
+
+                logEvent('Chrome HTML5 Webcam stream granted. Processing frames...', 'info');
+
+                const canvas = document.getElementById('canvas');
+                const ctx = canvas.getContext('2d');
+                const imgFeed = document.getElementById('videoFeed');
+
+                if (frameProcessingInterval) clearInterval(frameProcessingInterval);
+
+                frameProcessingInterval = setInterval(async () => {
+                    if (!isMonitoring || !useBrowserCamera) return;
+                    if (videoEl.readyState >= 2) {
+                        ctx.drawImage(videoEl, 0, 0, 640, 480);
+                        const dataUrl = canvas.toDataURL('image/jpeg', 0.8);
+
+                        try {
+                            const res = await fetch('/api/process_frame', {
+                                method: 'POST',
+                                headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify({ image: dataUrl })
+                            });
+                            const result = await res.json();
+                            if (result.status === 'ok' && result.annotated_image) {
+                                imgFeed.src = result.annotated_image;
+                                updateTelemetryUI(result.telemetry);
+                            }
+                        } catch(err) {}
+                    }
+                }, 60);
+
+            } catch (err) {
+                logEvent(`Chrome webcam access error: ${err.message}`, 'warning');
+            }
+        }
+
+        async function startMonitoring() {
+            initAudio();
+            const res = await fetch('/api/start', { method: 'POST' });
+            const data = await res.json();
+            if (data.status === 'ok') {
+                isMonitoring = true;
+                logEvent('Driver safety monitoring started.', 'info');
+                document.getElementById('systemBadge').innerText = 'SYSTEM ACTIVE';
+                document.getElementById('systemBadge').style.background = 'rgba(16, 185, 129, 0.15)';
+                document.getElementById('systemBadge').style.color = '#10B981';
+            }
+        }
+
+        async function stopMonitoring() {
+            const res = await fetch('/api/stop', { method: 'POST' });
+            isMonitoring = false;
+            stopWebAlarm();
+            logEvent('Driver safety monitoring stopped.', 'info');
+            document.getElementById('systemBadge').innerText = 'SYSTEM STANDBY';
+            document.getElementById('systemBadge').style.background = 'rgba(245, 158, 11, 0.15)';
+            document.getElementById('systemBadge').style.color = '#F59E0B';
+            document.getElementById('kpiStatus').innerText = 'OFFLINE';
+            document.getElementById('kpiStatus').style.color = 'var(--color-no-driver)';
+        }
+
+        async function resetSession() {
+            await fetch('/api/reset', { method: 'POST' });
+            logEvent('Session statistics reset.', 'info');
+        }
+
+        function logEvent(msg, type = 'info') {
+            const container = document.getElementById('eventLog');
+            const now = new Date().toLocaleTimeString();
+            const entry = document.createElement('div');
+            entry.className = `log-entry ${type}`;
+            let icon = '•';
+            if (type === 'warning') icon = '⚠️';
+            if (type === 'alert') icon = '🚨';
+            entry.innerText = `[${now}] ${icon} ${msg}`;
+            container.appendChild(entry);
+            container.scrollTop = container.scrollHeight;
+        }
+
+        function updateTelemetryUI(t) {
+            if (!t) return;
+
+            document.getElementById('kpiStatus').innerText = t.status || 'AWAKE';
+            const statusColors = {
+                'AWAKE': 'var(--color-awake)',
+                'CAUTION': 'var(--color-caution)',
+                'DROWSY': 'var(--color-drowsy)',
+                'NO_DRIVER': 'var(--color-no-driver)',
+                'MULTIPLE_FACES': 'var(--color-multi-face)'
+            };
+            document.getElementById('kpiStatus').style.color = statusColors[t.status] || 'var(--text-main)';
+
+            document.getElementById('kpiRisk').innerText = t.risk_level || 'LOW';
+            document.getElementById('kpiEye').innerText = t.is_eyes_closed ? `CLOSED (${(t.closed_duration || 0).toFixed(1)}s)` : 'OPEN';
+            document.getElementById('kpiEye').style.color = t.is_eyes_closed ? 'var(--color-drowsy)' : 'var(--color-awake)';
+            document.getElementById('kpiFps').innerText = `${Math.round(t.fps || 0)} FPS`;
+
+            document.getElementById('earLeft').innerText = (t.left_ear || 0).toFixed(3);
+            document.getElementById('earRight').innerText = (t.right_ear || 0).toFixed(3);
+            document.getElementById('earAvg').innerText = (t.average_ear || 0).toFixed(3);
+
+            document.getElementById('statTime').innerText = t.monitoring_duration_formatted || '00:00:00';
+            document.getElementById('statEvents').innerText = t.drowsiness_events || 0;
+            document.getElementById('statLongest').innerText = `${(t.longest_closure || 0).toFixed(2)} sec`;
+            document.getElementById('statSessionEar').innerText = (t.session_avg_ear || 0).toFixed(3);
+
+            const videoFeed = document.getElementById('videoFeed');
+            const drowsyBanner = document.getElementById('drowsyBanner');
+
+            if (t.status === 'DROWSY') {
+                videoFeed.classList.add('drowsy-alert');
+                drowsyBanner.style.display = 'block';
+                playWebAlarm();
+            } else {
+                videoFeed.classList.remove('drowsy-alert');
+                drowsyBanner.style.display = 'none';
+                stopWebAlarm();
+            }
+
+            if (t.status !== lastStatus && t.status !== 'OFFLINE') {
+                if (t.status === 'DROWSY') logEvent('DROWSINESS WARNING DETECTED! Alarm triggered.', 'alert');
+                else if (t.status === 'CAUTION') logEvent('Caution: Eyes closed > 1 sec.', 'warning');
+                else if (t.status === 'AWAKE' && (lastStatus === 'DROWSY' || lastStatus === 'CAUTION')) logEvent('Driver eyes reopened. Driver Awake.', 'info');
+                else if (t.status === 'NO_DRIVER') logEvent('Warning: No driver detected in camera frame.', 'warning');
+                lastStatus = t.status;
+            }
+        }
+
+        // Telemetry Polling Loop for Server Mode
+        setInterval(async () => {
+            if (useBrowserCamera || !isMonitoring) return;
+            try {
+                const res = await fetch('/telemetry');
+                const t = await res.json();
+                updateTelemetryUI(t);
+            } catch(e) {}
+        }, 200);
+    </script>
+</body>
+</html>
